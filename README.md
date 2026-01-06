@@ -6,7 +6,7 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Tests](https://github.com/data2intelligence/SecActPy/actions/workflows/tests.yml/badge.svg)](https://github.com/data2intelligence/SecActPy/actions/workflows/tests.yml)
-[![Docker](https://img.shields.io/docker/pulls/data2intelligence/secactpy)](https://hub.docker.com/r/data2intelligence/secactpy)
+[![Docker](https://img.shields.io/docker/pulls/psychemistz/secactpy)](https://hub.docker.com/r/psychemistz/secactpy)
 
 Python implementation of [SecAct](https://github.com/data2intelligence/SecAct) for inferring secreted protein activities from gene expression data.
 
@@ -296,13 +296,13 @@ Pre-built Docker images are available:
 
 ```bash
 # CPU version
-docker pull data2intelligence/secactpy:latest
+docker pull psychemistz/secactpy:latest
 
 # GPU version
-docker pull data2intelligence/secactpy:gpu
+docker pull psychemistz/secactpy:gpu
 
 # With R SecAct/RidgeR for cross-validation
-docker pull data2intelligence/secactpy:with-r
+docker pull psychemistz/secactpy:with-r
 ```
 
 See [DOCKER.md](DOCKER.md) for detailed usage instructions.

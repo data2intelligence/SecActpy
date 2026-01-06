@@ -8,10 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2025-01-06
 
 ### Changed
-- **Official Release**: Migrated to `data2intelligence` organization
+- **Official Release**: Migrated to `data2intelligence`
 - **PyPI Package**: Now available via `pip install secactpy`
 - Updated all documentation and URLs to point to official repository
-- Docker images now published to `data2intelligence/secactpy`
+- Docker images now published to `psychemistz/secactpy`
 
 ### Added
 - Comprehensive CI/CD pipeline with GitHub Actions

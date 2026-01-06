@@ -8,16 +8,16 @@ This guide explains how to use SecActPy with Docker, including CPU, GPU, and R-e
 
 ```bash
 # CPU version (Python only) - recommended for most users
-docker pull data2intelligence/secactpy:latest
+docker pull psychemistz/secactpy:latest
 
 # GPU version (Python + CuPy)
-docker pull data2intelligence/secactpy:gpu
+docker pull psychemistz/secactpy:gpu
 
 # CPU + R version (Python + SecAct/RidgeR/SpaCET)
-docker pull data2intelligence/secactpy:with-r
+docker pull psychemistz/secactpy:with-r
 
 # GPU + R version (full stack)
-docker pull data2intelligence/secactpy:gpu-with-r
+docker pull psychemistz/secactpy:gpu-with-r
 ```
 
 ### Build Images Locally
@@ -77,23 +77,23 @@ When building with `INSTALL_R=true`, the following packages are installed:
 
 ```bash
 # CPU
-docker run -it --rm -v $(pwd):/workspace data2intelligence/secactpy:latest
+docker run -it --rm -v $(pwd):/workspace psychemistz/secactpy:latest
 
 # GPU
-docker run -it --rm --gpus all -v $(pwd):/workspace data2intelligence/secactpy:gpu
+docker run -it --rm --gpus all -v $(pwd):/workspace psychemistz/secactpy:gpu
 
 # CPU + R (for cross-validation)
-docker run -it --rm -v $(pwd):/workspace data2intelligence/secactpy:with-r
+docker run -it --rm -v $(pwd):/workspace psychemistz/secactpy:with-r
 ```
 
 ### Run Scripts
 
 ```bash
 # Python script
-docker run --rm -v $(pwd):/workspace data2intelligence/secactpy:latest python your_script.py
+docker run --rm -v $(pwd):/workspace psychemistz/secactpy:latest python your_script.py
 
 # R script
-docker run --rm -v $(pwd):/workspace data2intelligence/secactpy:with-r Rscript your_script.R
+docker run --rm -v $(pwd):/workspace psychemistz/secactpy:with-r Rscript your_script.R
 ```
 
 ## Using Docker Compose
@@ -150,7 +150,7 @@ docker-compose up secactpy-jupyter-r
 ### Verify Python Installation
 
 ```bash
-docker run --rm data2intelligence/secactpy:latest python -c "
+docker run --rm psychemistz/secactpy:latest python -c "
 import secactpy
 print(f'SecActPy {secactpy.__version__}')
 print(f'GPU available: {secactpy.CUPY_AVAILABLE}')
@@ -164,7 +164,7 @@ print(f'Signature: {sig.shape}')
 ### Verify R Installation
 
 ```bash
-docker run --rm data2intelligence/secactpy:with-r Rscript -e "
+docker run --rm psychemistz/secactpy:with-r Rscript -e "
 cat('R version:', R.version.string, '\n')
 
 # Check packages
@@ -182,7 +182,7 @@ for (pkg in c('SecAct', 'RidgeR', 'SpaCET', 'Biobase')) {
 
 ```bash
 # Enter container with R
-docker run -it --rm -v $(pwd):/workspace data2intelligence/secactpy:with-r
+docker run -it --rm -v $(pwd):/workspace psychemistz/secactpy:with-r
 
 # Inside container - Run R inference
 Rscript -e "
@@ -244,10 +244,10 @@ sudo systemctl restart docker
 
 ```bash
 # Check GPU is accessible
-docker run --rm --gpus all data2intelligence/secactpy:gpu nvidia-smi
+docker run --rm --gpus all psychemistz/secactpy:gpu nvidia-smi
 
 # Check CuPy
-docker run --rm --gpus all data2intelligence/secactpy:gpu python -c "
+docker run --rm --gpus all psychemistz/secactpy:gpu python -c "
 import cupy as cp
 print(f'CuPy version: {cp.__version__}')
 x = cp.arange(10)
@@ -274,14 +274,14 @@ Common issues:
 
 ```bash
 # Run as current user
-docker run -it --rm -u $(id -u):$(id -g) -v $(pwd):/workspace data2intelligence/secactpy:latest
+docker run -it --rm -u $(id -u):$(id -g) -v $(pwd):/workspace psychemistz/secactpy:latest
 ```
 
 ### Memory Issues
 
 ```bash
 # Increase memory limit
-docker run -it --rm -m 16g -v $(pwd):/workspace data2intelligence/secactpy:latest
+docker run -it --rm -m 16g -v $(pwd):/workspace psychemistz/secactpy:latest
 ```
 
 ### GPU Not Detected
@@ -304,7 +304,7 @@ which nvidia-container-toolkit
 Create a custom Dockerfile:
 
 ```dockerfile
-FROM data2intelligence/secactpy:with-r
+FROM psychemistz/secactpy:with-r
 
 # Add R packages
 RUN R -e "install.packages('your_r_package', repos='https://cloud.r-project.org/')"
@@ -322,7 +322,7 @@ docker run -it --rm \
   -v $(pwd):/workspace \
   -v /path/to/data:/data:ro \
   -v /path/to/results:/results \
-  data2intelligence/secactpy:latest
+  psychemistz/secactpy:latest
 ```
 
 ## CI/CD Notes
