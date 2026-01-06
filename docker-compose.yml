@@ -2,59 +2,41 @@
 # Docker Compose for SecActPy
 #
 # Usage:
-#   docker-compose up -d secactpy        # Start CPU version
-#   docker-compose up -d secactpy-gpu    # Start GPU version
-#   docker-compose up -d secactpy-r      # Start CPU + R version
-#   docker-compose exec secactpy bash    # Enter container
-#   docker-compose down                  # Stop all
-#
-# With Jupyter:
-#   docker-compose up secactpy-jupyter
-#   Open http://localhost:8888
+#   docker-compose up -d secactpy          # Start CPU container
+#   docker-compose up -d secactpy-gpu      # Start GPU container
+#   docker-compose up secactpy-jupyter     # Start Jupyter (CPU)
+#   docker-compose exec secactpy bash      # Enter running container
+#   docker-compose down                    # Stop all containers
 # =============================================================================
 
 version: '3.8'
 
 services:
   # ===========================================================================
-  # CPU version (Python only, fast build)
+  # CPU Container (Python only)
   # ===========================================================================
   secactpy:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        USE_GPU: "false"
-        INSTALL_R: "false"
-    image: secactpy:latest
+    image: data2intelligence/secactpy:latest
     container_name: secactpy
     volumes:
-      - ./:/workspace
+      - .:/workspace
       - secactpy-cache:/root/.cache
     working_dir: /workspace
     stdin_open: true
     tty: true
-    command: /bin/bash
 
   # ===========================================================================
-  # GPU version (Python only)
+  # GPU Container (Python + CuPy)
   # ===========================================================================
   secactpy-gpu:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        USE_GPU: "true"
-        INSTALL_R: "false"
-    image: secactpy:gpu
+    image: data2intelligence/secactpy:gpu
     container_name: secactpy-gpu
     volumes:
-      - ./:/workspace
+      - .:/workspace
       - secactpy-cache:/root/.cache
     working_dir: /workspace
     stdin_open: true
     tty: true
-    command: /bin/bash
     deploy:
       resources:
         reservations:
@@ -64,44 +46,30 @@ services:
               capabilities: [gpu]
 
   # ===========================================================================
-  # CPU + R version (Python + SecAct/RidgeR/SpaCET)
+  # CPU + R Container (Python + R SecAct/RidgeR/SpaCET)
   # ===========================================================================
   secactpy-r:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        USE_GPU: "false"
-        INSTALL_R: "true"
-    image: secactpy:with-r
+    image: data2intelligence/secactpy:with-r
     container_name: secactpy-r
     volumes:
-      - ./:/workspace
+      - .:/workspace
       - secactpy-cache:/root/.cache
     working_dir: /workspace
     stdin_open: true
     tty: true
-    command: /bin/bash
 
   # ===========================================================================
-  # GPU + R version (Python + CuPy + SecAct/RidgeR/SpaCET)
+  # GPU + R Container (Full stack)
   # ===========================================================================
   secactpy-gpu-r:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        USE_GPU: "true"
-        INSTALL_R: "true"
-    image: secactpy:gpu-with-r
+    image: data2intelligence/secactpy:gpu-with-r
     container_name: secactpy-gpu-r
     volumes:
-      - ./:/workspace
+      - .:/workspace
       - secactpy-cache:/root/.cache
     working_dir: /workspace
     stdin_open: true
     tty: true
-    command: /bin/bash
     deploy:
       resources:
         reservations:
@@ -114,16 +82,10 @@ services:
   # Jupyter Lab (CPU)
   # ===========================================================================
   secactpy-jupyter:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        USE_GPU: "false"
-        INSTALL_R: "false"
-    image: secactpy:jupyter
+    image: data2intelligence/secactpy:latest
     container_name: secactpy-jupyter
     volumes:
-      - ./:/workspace
+      - .:/workspace
       - secactpy-cache:/root/.cache
     working_dir: /workspace
     ports:
@@ -134,16 +96,10 @@ services:
   # Jupyter Lab (GPU)
   # ===========================================================================
   secactpy-jupyter-gpu:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        USE_GPU: "true"
-        INSTALL_R: "false"
-    image: secactpy:jupyter-gpu
+    image: data2intelligence/secactpy:gpu
     container_name: secactpy-jupyter-gpu
     volumes:
-      - ./:/workspace
+      - .:/workspace
       - secactpy-cache:/root/.cache
     working_dir: /workspace
     ports:
@@ -158,19 +114,13 @@ services:
               capabilities: [gpu]
 
   # ===========================================================================
-  # Jupyter Lab (CPU + R) - For cross-validation testing
+  # Jupyter Lab (CPU + R)
   # ===========================================================================
   secactpy-jupyter-r:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        USE_GPU: "false"
-        INSTALL_R: "true"
-    image: secactpy:jupyter-with-r
+    image: data2intelligence/secactpy:with-r
     container_name: secactpy-jupyter-r
     volumes:
-      - ./:/workspace
+      - .:/workspace
       - secactpy-cache:/root/.cache
     working_dir: /workspace
     ports:
