@@ -1,0 +1,131 @@
+# =============================================================================
+# Docker Compose for SecActPy
+#
+# Usage:
+#   docker-compose up -d secactpy          # Start CPU container
+#   docker-compose up -d secactpy-gpu      # Start GPU container
+#   docker-compose up secactpy-jupyter     # Start Jupyter (CPU)
+#   docker-compose exec secactpy bash      # Enter running container
+#   docker-compose down                    # Stop all containers
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # ===========================================================================
+  # CPU Container (Python only)
+  # ===========================================================================
+  secactpy:
+    image: data2intelligence/secactpy:latest
+    container_name: secactpy
+    volumes:
+      - .:/workspace
+      - secactpy-cache:/root/.cache
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
+  # ===========================================================================
+  # GPU Container (Python + CuPy)
+  # ===========================================================================
+  secactpy-gpu:
+    image: data2intelligence/secactpy:gpu
+    container_name: secactpy-gpu
+    volumes:
+      - .:/workspace
+      - secactpy-cache:/root/.cache
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ===========================================================================
+  # CPU + R Container (Python + R SecAct/RidgeR/SpaCET)
+  # ===========================================================================
+  secactpy-r:
+    image: data2intelligence/secactpy:with-r
+    container_name: secactpy-r
+    volumes:
+      - .:/workspace
+      - secactpy-cache:/root/.cache
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
+  # ===========================================================================
+  # GPU + R Container (Full stack)
+  # ===========================================================================
+  secactpy-gpu-r:
+    image: data2intelligence/secactpy:gpu-with-r
+    container_name: secactpy-gpu-r
+    volumes:
+      - .:/workspace
+      - secactpy-cache:/root/.cache
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ===========================================================================
+  # Jupyter Lab (CPU)
+  # ===========================================================================
+  secactpy-jupyter:
+    image: data2intelligence/secactpy:latest
+    container_name: secactpy-jupyter
+    volumes:
+      - .:/workspace
+      - secactpy-cache:/root/.cache
+    working_dir: /workspace
+    ports:
+      - "8888:8888"
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token=''
+
+  # ===========================================================================
+  # Jupyter Lab (GPU)
+  # ===========================================================================
+  secactpy-jupyter-gpu:
+    image: data2intelligence/secactpy:gpu
+    container_name: secactpy-jupyter-gpu
+    volumes:
+      - .:/workspace
+      - secactpy-cache:/root/.cache
+    working_dir: /workspace
+    ports:
+      - "8889:8888"
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token=''
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ===========================================================================
+  # Jupyter Lab (CPU + R)
+  # ===========================================================================
+  secactpy-jupyter-r:
+    image: data2intelligence/secactpy:with-r
+    container_name: secactpy-jupyter-r
+    volumes:
+      - .:/workspace
+      - secactpy-cache:/root/.cache
+    working_dir: /workspace
+    ports:
+      - "8890:8888"
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token=''
+
+volumes:
+  secactpy-cache:
