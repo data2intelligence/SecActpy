@@ -2,13 +2,10 @@
 
 **Secreted Protein Activity Inference using Ridge Regression**
 
-[![PyPI version](https://badge.fury.io/py/secactpy.svg)](https://pypi.org/project/secactpy/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://github.com/data2intelligence/SecActPy/actions/workflows/tests.yml/badge.svg)](https://github.com/data2intelligence/SecActPy/actions/workflows/tests.yml)
-[![Docker](https://img.shields.io/docker/pulls/data2intelligence/secactpy)](https://hub.docker.com/r/data2intelligence/secactpy)
 
-Python implementation of [SecAct](https://github.com/data2intelligence/SecAct) for inferring secreted protein activities from gene expression data.
+SecActPy is a Python package for inferring secreted protein (e.g. cytokine/chemokine) activity from gene expression data using ridge regression with permutation-based significance testing.
 
 **Key Features:**
 - 🎯 **SecAct Compatible**: Produces identical results to the R SecAct/RidgeR package
@@ -21,20 +18,16 @@ Python implementation of [SecAct](https://github.com/data2intelligence/SecAct) f
 
 ## Installation
 
-### From PyPI (Recommended)
+### CPU Only
 
 ```bash
-pip install secactpy
+pip install git+https://github.com/psychemistz/SecActPy.git
 ```
 
-### From GitHub
+### With GPU Support (CUDA 11.x)
 
 ```bash
-# CPU Only
-pip install git+https://github.com/data2intelligence/SecActPy.git
-
-# With GPU Support (CUDA 11.x)
-pip install "secactpy[gpu] @ git+https://github.com/data2intelligence/SecActPy.git"
+pip install "secactpy[gpu] @ git+https://github.com/psychemistz/SecActPy.git"
 ```
 
 > **Note**: For CUDA 12.x, install CuPy separately: `pip install cupy-cuda12x`
@@ -42,7 +35,7 @@ pip install "secactpy[gpu] @ git+https://github.com/data2intelligence/SecActPy.g
 ### Development Installation
 
 ```bash
-git clone https://github.com/data2intelligence/SecActPy.git
+git clone https://github.com/psychemistz/SecActPy.git
 cd SecActPy
 pip install -e ".[dev]"
 ```
@@ -290,23 +283,6 @@ secactpy bulk -i data.tsv -o results.h5ad --signature cytosig -v
 | `--batch-size` | Batch size for large datasets |
 | `-v, --verbose` | Verbose output |
 
-## Docker
-
-Pre-built Docker images are available:
-
-```bash
-# CPU version
-docker pull data2intelligence/secactpy:latest
-
-# GPU version
-docker pull data2intelligence/secactpy:gpu
-
-# With R SecAct/RidgeR for cross-validation
-docker pull data2intelligence/secactpy:with-r
-```
-
-See [DOCKER.md](DOCKER.md) for detailed usage instructions.
-
 ## Reproducibility
 
 SecActPy produces **identical results** to R SecAct/RidgeR:
@@ -323,7 +299,7 @@ result = secact_activity_inference(
 )
 ```
 
-For faster analysis (when R compatibility is not required):
+For faster inference when R compatibility is not needed:
 
 ```python
 result = secact_activity_inference(
@@ -348,16 +324,7 @@ result = secact_activity_inference(
 
 If you use SecActPy in your research, please cite:
 
-> Beibei Ru, Lanqi Gong, Emily Yang, Seongyong Park, George Zaki, Kenneth Aldape, Lalage Wakefield, Peng Jiang. 
-> **Inference of secreted protein activities in intercellular communication.**
-> [GitHub: data2intelligence/SecAct](https://github.com/data2intelligence/SecAct)
-
-## Related Projects
-
-- [SecAct](https://github.com/data2intelligence/SecAct) - Original R implementation
-- [RidgeR](https://github.com/beibeiru/RidgeR) - R ridge regression package
-- [SpaCET](https://github.com/data2intelligence/SpaCET) - Spatial transcriptomics cell type analysis
-- [CytoSig](https://github.com/data2intelligence/CytoSig) - Cytokine signaling inference
+Beibei Ru, Lanqi Gong, Emily Yang, Seongyong Park, George Zaki, Kenneth Aldape, Lalage Wakefield, Peng Jiang. Inference of secreted protein activities in intercellular communication. [[Link](https://github.com/data2intelligence/SecAct)]
 
 ## License
 
@@ -365,13 +332,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Changelog
 
-### v0.2.0 (Official Release)
-- Official release under data2intelligence organization
-- PyPI package available (`pip install secactpy`)
-- Comprehensive test suite and CI/CD pipeline
-- Docker images with GPU and R support
-
-### v0.1.2 (Initial Development)
+### v0.1.2 (Initial Release)
 - Ridge regression with permutation-based significance testing
 - GPU acceleration via CuPy backend (9–34x speedup)
 - Batch processing with streaming H5AD output for million-sample datasets
