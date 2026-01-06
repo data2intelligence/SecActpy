@@ -4,15 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "secactpy"
-version = "0.1.2"
+version = "0.2.0"
 description = "Secreted Protein Activity Inference using Ridge Regression"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Seongyong Park"}
+    {name = "Seongyong Park", email = "seongyong.park@nih.gov"},
+    {name = "Beibei Ru"},
+    {name = "Peng Jiang"}
 ]
 maintainers = [
-    {name = "Seongyong Park"}
+    {name = "Seongyong Park", email = "seongyong.park@nih.gov"},
+    {name = "Data2Intelligence Lab"}
 ]
 keywords = [
     "bioinformatics",
@@ -22,6 +25,8 @@ keywords = [
     "signaling",
     "ridge-regression",
     "secreted-proteins",
+    "cell-communication",
+    "tumor-microenvironment",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -57,10 +62,11 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/psychemistz/SecActPy"
-Documentation = "https://github.com/psychemistz/SecActPy#readme"
-Repository = "https://github.com/psychemistz/SecActPy"
-Issues = "https://github.com/psychemistz/SecActPy/issues"
+Homepage = "https://github.com/data2intelligence/SecActPy"
+Documentation = "https://github.com/data2intelligence/SecActPy#readme"
+Repository = "https://github.com/data2intelligence/SecActPy"
+Issues = "https://github.com/data2intelligence/SecActPy/issues"
+"Original R Package" = "https://github.com/data2intelligence/SecAct"
 
 [project.scripts]
 secactpy = "secactpy.cli:main"
