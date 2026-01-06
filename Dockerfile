@@ -295,7 +295,7 @@ RUN if [ "$USE_GPU" = "true" ]; then \
     fi
 
 # Install SecActPy from GitHub (official repository)
-RUN pip3 install --no-cache-dir git+https://github.com/data2intelligence/SecActPy.git
+RUN pip3 install --no-cache-dir git+https://github.com/data2intelligence/SecActpy.git
 
 # Verify Python installation
 RUN python3 -c "import secactpy; print(f'SecActPy {secactpy.__version__} OK, GPU: {secactpy.CUPY_AVAILABLE}')"
@@ -324,7 +324,7 @@ CMD ["/bin/bash"]
 # Labels
 # =============================================================================
 
-LABEL maintainer="Data2Intelligence Lab <https://github.com/data2intelligence>"
+LABEL maintainer="Seongyong Park <https://github.com/psychemistz>"
 LABEL description="SecActPy - Secreted Protein Activity Inference (CPU/GPU)"
 LABEL version="0.2.0"
-LABEL org.opencontainers.image.source="https://github.com/data2intelligence/SecActPy"
+LABEL org.opencontainers.image.source="https://github.com/data2intelligence/SecActpy"
