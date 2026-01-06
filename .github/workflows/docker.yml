@@ -38,7 +38,7 @@ on:
           - 'true'
 
 env:
-  DOCKERHUB_REPO: data2intelligence/secactpy
+  DOCKERHUB_REPO: psychemistz/secactpy
 
 jobs:
   # ===========================================================================

@@ -16,7 +16,7 @@ services:
   # CPU Container (Python only)
   # ===========================================================================
   secactpy:
-    image: data2intelligence/secactpy:latest
+    image: psychemistz/secactpy:latest
     container_name: secactpy
     volumes:
       - .:/workspace
@@ -29,7 +29,7 @@ services:
   # GPU Container (Python + CuPy)
   # ===========================================================================
   secactpy-gpu:
-    image: data2intelligence/secactpy:gpu
+    image: psychemistz/secactpy:gpu
     container_name: secactpy-gpu
     volumes:
       - .:/workspace
@@ -49,7 +49,7 @@ services:
   # CPU + R Container (Python + R SecAct/RidgeR/SpaCET)
   # ===========================================================================
   secactpy-r:
-    image: data2intelligence/secactpy:with-r
+    image: psychemistz/secactpy:with-r
     container_name: secactpy-r
     volumes:
       - .:/workspace
@@ -62,7 +62,7 @@ services:
   # GPU + R Container (Full stack)
   # ===========================================================================
   secactpy-gpu-r:
-    image: data2intelligence/secactpy:gpu-with-r
+    image: psychemistz/secactpy:gpu-with-r
     container_name: secactpy-gpu-r
     volumes:
       - .:/workspace
@@ -82,7 +82,7 @@ services:
   # Jupyter Lab (CPU)
   # ===========================================================================
   secactpy-jupyter:
-    image: data2intelligence/secactpy:latest
+    image: psychemistz/secactpy:latest
     container_name: secactpy-jupyter
     volumes:
       - .:/workspace
@@ -96,7 +96,7 @@ services:
   # Jupyter Lab (GPU)
   # ===========================================================================
   secactpy-jupyter-gpu:
-    image: data2intelligence/secactpy:gpu
+    image: psychemistz/secactpy:gpu
     container_name: secactpy-jupyter-gpu
     volumes:
       - .:/workspace
@@ -117,7 +117,7 @@ services:
   # Jupyter Lab (CPU + R)
   # ===========================================================================
   secactpy-jupyter-r:
-    image: data2intelligence/secactpy:with-r
+    image: psychemistz/secactpy:with-r
     container_name: secactpy-jupyter-r
     volumes:
       - .:/workspace
