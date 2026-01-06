@@ -1,0 +1,224 @@
+# =============================================================================
+# GitHub Actions: Build and Push Docker Images
+#
+# Triggers:
+#   - Push to main branch
+#   - Release published
+#   - Manual dispatch
+#
+# Builds CPU, GPU, and optional R-enabled images
+#
+# Setup required:
+#   1. Create Docker Hub account and repository: data2intelligence/secactpy
+#   2. Add repository secrets:
+#      - DOCKERHUB_USERNAME
+#      - DOCKERHUB_TOKEN (access token from Docker Hub)
+# =============================================================================
+
+name: Docker Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'secactpy/**'
+      - 'Dockerfile'
+      - 'pyproject.toml'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      build_r:
+        description: 'Build images with R packages'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+env:
+  DOCKERHUB_REPO: data2intelligence/secactpy
+
+jobs:
+  # ===========================================================================
+  # CPU Image (Python only) - Fast build
+  # ===========================================================================
+  build-cpu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep 'version = ' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build and push CPU image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          build-args: |
+            USE_GPU=false
+            INSTALL_R=false
+          tags: |
+            ${{ env.DOCKERHUB_REPO }}:latest
+            ${{ env.DOCKERHUB_REPO }}:cpu
+            ${{ env.DOCKERHUB_REPO }}:${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ===========================================================================
+  # GPU Image (Python only)
+  # ===========================================================================
+  build-gpu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep 'version = ' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build and push GPU image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          build-args: |
+            USE_GPU=true
+            INSTALL_R=false
+          tags: |
+            ${{ env.DOCKERHUB_REPO }}:gpu
+            ${{ env.DOCKERHUB_REPO }}:${{ steps.version.outputs.version }}-gpu
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ===========================================================================
+  # CPU + R Image (Python + R SecAct/RidgeR/SpaCET)
+  # Only builds on release or manual trigger with build_r=true
+  # ===========================================================================
+  build-cpu-r:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.build_r == 'true')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep 'version = ' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build and push CPU+R image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          build-args: |
+            USE_GPU=false
+            INSTALL_R=true
+          tags: |
+            ${{ env.DOCKERHUB_REPO }}:with-r
+            ${{ env.DOCKERHUB_REPO }}:cpu-with-r
+            ${{ env.DOCKERHUB_REPO }}:${{ steps.version.outputs.version }}-with-r
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+        timeout-minutes: 60  # R builds take longer
+
+  # ===========================================================================
+  # GPU + R Image (Python + CuPy + R SecAct/RidgeR/SpaCET)
+  # Only builds on release or manual trigger with build_r=true
+  # ===========================================================================
+  build-gpu-r:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.build_r == 'true')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep 'version = ' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build and push GPU+R image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          build-args: |
+            USE_GPU=true
+            INSTALL_R=true
+          tags: |
+            ${{ env.DOCKERHUB_REPO }}:gpu-with-r
+            ${{ env.DOCKERHUB_REPO }}:${{ steps.version.outputs.version }}-gpu-with-r
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+        timeout-minutes: 60  # R builds take longer
+
+  # ===========================================================================
+  # Update Docker Hub README
+  # ===========================================================================
+  update-description:
+    runs-on: ubuntu-latest
+    needs: [build-cpu]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Update Docker Hub description
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.DOCKERHUB_REPO }}
+          readme-filepath: ./DOCKER.md

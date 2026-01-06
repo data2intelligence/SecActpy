@@ -1,0 +1,166 @@
+# =============================================================================
+# GitHub Actions: Run Tests
+#
+# Triggers:
+#   - Push to main/develop branches
+#   - Pull requests to main
+# =============================================================================
+
+name: Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas scipy h5py anndata scanpy
+          pip install -e .
+
+      - name: Test imports
+        run: |
+          python -c "import secactpy; print(f'SecActPy {secactpy.__version__}')"
+          python -c "from secactpy import ridge, ridge_batch, CUPY_AVAILABLE; print(f'GPU: {CUPY_AVAILABLE}')"
+
+      - name: Test signature loading
+        run: |
+          python -c "from secactpy import load_signature; s=load_signature('secact'); print('SecAct:', s.shape)"
+          python -c "from secactpy import load_signature; s=load_signature('cytosig'); print('CytoSig:', s.shape)"
+
+      - name: Test RNG (GSL compatibility)
+        run: |
+          python -c "
+          from secactpy.rng import GSLRNG
+          import numpy as np
+          r = GSLRNG(0)
+          arr = np.arange(10)
+          r.shuffle_inplace(arr)
+          p = arr.tolist()
+          assert p == [9,2,4,0,5,7,3,6,1,8], f'Got {p}'
+          print('RNG OK:', p)
+          "
+
+      - name: Test ridge regression
+        run: |
+          python -c "
+          import numpy as np
+          from secactpy import ridge
+          np.random.seed(0)
+          X = np.random.randn(50, 5)
+          Y = np.random.randn(50, 3)
+          r = ridge(X, Y, n_rand=10)
+          print('Ridge OK:', r['beta'].shape)
+          assert r['beta'].shape == (5, 3)
+          "
+
+      - name: Test ridge_batch
+        run: |
+          python -c "
+          import numpy as np
+          from secactpy import ridge_batch
+          np.random.seed(0)
+          X = np.random.randn(50, 5)
+          Y = np.random.randn(50, 10)
+          r = ridge_batch(X, Y, batch_size=5, n_rand=10)
+          print('Ridge batch OK:', r['beta'].shape)
+          assert r['beta'].shape == (5, 10)
+          "
+
+      - name: Test high-level inference
+        run: |
+          python -c "
+          import numpy as np
+          import pandas as pd
+          from secactpy import secact_activity_inference, load_signature
+          
+          # Create test data with real gene names
+          sig = load_signature('secact')
+          genes = list(sig.index)[:100]
+          np.random.seed(42)
+          data = pd.DataFrame(
+              np.random.randn(len(genes), 3),
+              index=genes,
+              columns=['S1', 'S2', 'S3']
+          )
+          
+          result = secact_activity_inference(
+              data,
+              is_differential=True,
+              n_rand=10,
+              verbose=False
+          )
+          print('Inference OK:', result['zscore'].shape)
+          "
+
+  lint:
+    runs-on: ubuntu-latest
+    continue-on-error: true  # Don't block on lint errors
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install linters
+        run: |
+          pip install ruff black
+
+      - name: Run ruff
+        run: ruff check secactpy/ --output-format=github || true
+
+      - name: Check formatting with black
+        run: black --check --diff secactpy/ || true
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build package
+        run: python -m build
+
+      - name: Check package
+        run: twine check dist/*
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
