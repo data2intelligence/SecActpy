@@ -31,10 +31,10 @@ pip install secactpy
 
 ```bash
 # CPU Only
-pip install git+https://github.com/data2intelligence/SecActPy.git
+pip install git+https://github.com/data2intelligence/SecActpy.git
 
 # With GPU Support (CUDA 11.x)
-pip install "secactpy[gpu] @ git+https://github.com/data2intelligence/SecActPy.git"
+pip install "secactpy[gpu] @ git+https://github.com/data2intelligence/SecActpy.git"
 ```
 
 > **Note**: For CUDA 12.x, install CuPy separately: `pip install cupy-cuda12x`
@@ -42,8 +42,8 @@ pip install "secactpy[gpu] @ git+https://github.com/data2intelligence/SecActPy.g
 ### Development Installation
 
 ```bash
-git clone https://github.com/data2intelligence/SecActPy.git
-cd SecActPy
+git clone https://github.com/data2intelligence/SecActpy.git
+cd SecActpy
 pip install -e ".[dev]"
 ```
 
