@@ -69,15 +69,11 @@ AVAILABLE_SIGNATURES = {
         'reference': 'CytoSig database',
     },
     'lincytosig': {
-        'filename': 'LinCytoSig.csv',
+        'filename': 'LinCytoSig.tsv.gz',
         'description': 'Cell-type-specific cytokine signatures (median-aggregated from CytoSig DE database)',
         'reference': 'CytoSig database, cell-type stratified',
-        'external': True,  # Not bundled with package
     },
 }
-
-# Default path for LinCytoSig (external signature)
-LINCYTOSIG_DEFAULT_PATH = Path('/data/parks34/projects/2secactpy/results/celltype_signatures/celltype_cytokine_signatures.csv')
 
 DEFAULT_SIGNATURE = 'secact'
 
@@ -195,14 +191,6 @@ def load_signature(
         )
 
     sig_info = AVAILABLE_SIGNATURES[name_lower]
-
-    # Handle external signatures (not bundled with package)
-    if sig_info.get('external', False):
-        if name_lower == 'lincytosig':
-            return load_lincytosig(features=features, genes=genes)
-        else:
-            raise ValueError(f"External signature '{name}' requires custom loader")
-
     filename = sig_info['filename']
 
     # Get file path
@@ -295,7 +283,6 @@ def load_cytosig(
 
 
 def load_lincytosig(
-    path: Optional[Union[str, Path]] = None,
     features: Optional[List[str]] = None,
     genes: Optional[List[str]] = None,
     cell_types: Optional[List[str]] = None,
@@ -312,8 +299,6 @@ def load_lincytosig(
 
     Parameters
     ----------
-    path : str or Path, optional
-        Path to LinCytoSig CSV file. If None, uses default location.
     features : list, optional
         Subset of features (CellType__Cytokine columns) to load.
     genes : list, optional
@@ -343,30 +328,8 @@ def load_lincytosig(
     >>> # Filter to IFNG responses across all cell types
     >>> ifng_sig = load_lincytosig(cytokines=["IFNG"])
     """
-    # Determine path
-    if path is None:
-        path = LINCYTOSIG_DEFAULT_PATH
-    else:
-        path = Path(path)
-
-    if not path.exists():
-        raise FileNotFoundError(
-            f"LinCytoSig file not found: {path}\n"
-            "Generate it using: python scripts/build_celltype_signatures.py"
-        )
-
-    # Load the signature matrix
-    df = pd.read_csv(path, index_col=0)
-    df.index.name = 'gene'
-
-    # Ensure float dtype
-    df = df.astype(np.float64)
-
-    # Handle NaN values (sparse matrix may have NaNs for untested combinations)
-    if df.isna().any().any():
-        n_nan = df.isna().sum().sum()
-        warnings.warn(f"LinCytoSig contains {n_nan} NaN values. Filling with 0.")
-        df = df.fillna(0.0)
+    # Load via load_signature (uses bundled tsv.gz file)
+    df = load_signature('lincytosig', features=None, genes=genes)
 
     # Filter by cell types
     if cell_types is not None:
@@ -403,16 +366,6 @@ def load_lincytosig(
             warnings.warn(f"Features not found in LinCytoSig: {list(missing)[:5]}...")
         available_features = [f for f in features if f in df.columns]
         df = df[available_features]
-
-    # Filter by genes
-    if genes is not None:
-        df.index = df.index.astype(str)
-        genes_str = [str(g) for g in genes]
-        available_genes = [g for g in genes_str if g in df.index]
-        if len(available_genes) < len(genes):
-            n_missing = len(genes) - len(available_genes)
-            warnings.warn(f"{n_missing} requested genes not found in LinCytoSig")
-        df = df.loc[available_genes]
 
     return df
 
