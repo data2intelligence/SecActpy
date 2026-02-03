@@ -163,6 +163,7 @@ from .signature import (
     get_signature_info,
     list_signatures,
     load_cytosig,
+    load_lincytosig,
     load_secact,
     load_signature,
 )
@@ -184,6 +185,7 @@ __all__ = [
     "load_signature",
     "load_secact",
     "load_cytosig",
+    "load_lincytosig",
     "list_signatures",
     "get_signature_info",
     "AVAILABLE_SIGNATURES",

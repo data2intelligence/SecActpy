@@ -46,6 +46,7 @@ __all__ = [
     'load_signature',
     'load_secact',
     'load_cytosig',
+    'load_lincytosig',
     'list_signatures',
     'get_signature_info',
     'AVAILABLE_SIGNATURES',
@@ -67,7 +68,16 @@ AVAILABLE_SIGNATURES = {
         'description': 'Cytokine signaling signature',
         'reference': 'CytoSig database',
     },
+    'lincytosig': {
+        'filename': 'LinCytoSig.csv',
+        'description': 'Cell-type-specific cytokine signatures (median-aggregated from CytoSig DE database)',
+        'reference': 'CytoSig database, cell-type stratified',
+        'external': True,  # Not bundled with package
+    },
 }
+
+# Default path for LinCytoSig (external signature)
+LINCYTOSIG_DEFAULT_PATH = Path('/data/parks34/projects/2secactpy/results/celltype_signatures/celltype_cytokine_signatures.csv')
 
 DEFAULT_SIGNATURE = 'secact'
 
@@ -185,6 +195,14 @@ def load_signature(
         )
 
     sig_info = AVAILABLE_SIGNATURES[name_lower]
+
+    # Handle external signatures (not bundled with package)
+    if sig_info.get('external', False):
+        if name_lower == 'lincytosig':
+            return load_lincytosig(features=features, genes=genes)
+        else:
+            raise ValueError(f"External signature '{name}' requires custom loader")
+
     filename = sig_info['filename']
 
     # Get file path
@@ -274,6 +292,129 @@ def load_cytosig(
         CytoSig signature matrix.
     """
     return load_signature('cytosig', features=features, genes=genes)
+
+
+def load_lincytosig(
+    path: Optional[Union[str, Path]] = None,
+    features: Optional[List[str]] = None,
+    genes: Optional[List[str]] = None,
+    cell_types: Optional[List[str]] = None,
+    cytokines: Optional[List[str]] = None,
+) -> pd.DataFrame:
+    """
+    Load the LinCytoSig signature matrix.
+
+    LinCytoSig contains cell-type-specific cytokine response signatures,
+    derived from the CytoSig differential expression database using
+    median aggregation across experiments.
+
+    Signature columns are named as "CellType__Cytokine" (e.g., "Macrophage__IFNG").
+
+    Parameters
+    ----------
+    path : str or Path, optional
+        Path to LinCytoSig CSV file. If None, uses default location.
+    features : list, optional
+        Subset of features (CellType__Cytokine columns) to load.
+    genes : list, optional
+        Subset of genes to load.
+    cell_types : list, optional
+        Filter to specific cell types (e.g., ["Macrophage", "T_CD4"]).
+    cytokines : list, optional
+        Filter to specific cytokines (e.g., ["IFNG", "TNFA"]).
+
+    Returns
+    -------
+    DataFrame
+        LinCytoSig signature matrix (genes x cell_type__cytokine).
+        Shape: (19918, 178) for full matrix.
+
+    Examples
+    --------
+    >>> sig = load_lincytosig()
+    >>> print(sig.shape)
+    (19918, 178)
+
+    >>> # Filter to macrophage signatures only
+    >>> mac_sig = load_lincytosig(cell_types=["Macrophage"])
+    >>> print(mac_sig.columns.tolist())
+    ['Macrophage__IFNG', 'Macrophage__TNFA', ...]
+
+    >>> # Filter to IFNG responses across all cell types
+    >>> ifng_sig = load_lincytosig(cytokines=["IFNG"])
+    """
+    # Determine path
+    if path is None:
+        path = LINCYTOSIG_DEFAULT_PATH
+    else:
+        path = Path(path)
+
+    if not path.exists():
+        raise FileNotFoundError(
+            f"LinCytoSig file not found: {path}\n"
+            "Generate it using: python scripts/build_celltype_signatures.py"
+        )
+
+    # Load the signature matrix
+    df = pd.read_csv(path, index_col=0)
+    df.index.name = 'gene'
+
+    # Ensure float dtype
+    df = df.astype(np.float64)
+
+    # Handle NaN values (sparse matrix may have NaNs for untested combinations)
+    if df.isna().any().any():
+        n_nan = df.isna().sum().sum()
+        warnings.warn(f"LinCytoSig contains {n_nan} NaN values. Filling with 0.")
+        df = df.fillna(0.0)
+
+    # Filter by cell types
+    if cell_types is not None:
+        matching_cols = [
+            col for col in df.columns
+            if col.split('__')[0] in cell_types
+        ]
+        if not matching_cols:
+            available_cts = sorted(set(col.split('__')[0] for col in df.columns))
+            raise ValueError(
+                f"No columns match cell_types {cell_types}. "
+                f"Available: {available_cts[:10]}..."
+            )
+        df = df[matching_cols]
+
+    # Filter by cytokines
+    if cytokines is not None:
+        matching_cols = [
+            col for col in df.columns
+            if col.split('__')[1] in cytokines
+        ]
+        if not matching_cols:
+            available_cyto = sorted(set(col.split('__')[1] for col in df.columns))
+            raise ValueError(
+                f"No columns match cytokines {cytokines}. "
+                f"Available: {available_cyto[:10]}..."
+            )
+        df = df[matching_cols]
+
+    # Filter by specific features (overrides cell_types/cytokines if both given)
+    if features is not None:
+        missing = set(features) - set(df.columns)
+        if missing:
+            warnings.warn(f"Features not found in LinCytoSig: {list(missing)[:5]}...")
+        available_features = [f for f in features if f in df.columns]
+        df = df[available_features]
+
+    # Filter by genes
+    if genes is not None:
+        df.index = df.index.astype(str)
+        genes_str = [str(g) for g in genes]
+        available_genes = [g for g in genes_str if g in df.index]
+        if len(available_genes) < len(genes):
+            n_missing = len(genes) - len(available_genes)
+            warnings.warn(f"{n_missing} requested genes not found in LinCytoSig")
+        df = df.loc[available_genes]
+
+    return df
 
 
 # =============================================================================
