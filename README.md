@@ -88,7 +88,7 @@ from secactpy import secact_activity_inference
 
 # Load differential expression data (genes × samples)
 # Download: https://zenodo.org/records/18520356/files/Ly86-Fc_vs_Vehicle_logFC.txt
-diff_expr = pd.read_csv("Ly86-Fc_vs_Vehicle_logFC.txt", sep="\t", index_col=0)
+diff_expr = pd.read_csv("Ly86-Fc_vs_Vehicle_logFC.txt", sep=r"\s+", index_col=0)
 
 # Run inference
 result = secact_activity_inference(
