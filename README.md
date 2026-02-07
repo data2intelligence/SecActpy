@@ -21,6 +21,14 @@ Python implementation of [SecAct](https://github.com/data2intelligence/SecAct) f
 
 ## Installation
 
+> **Recommended**: Create a virtual environment before installing to avoid dependency conflicts with other packages.
+>
+> ```bash
+> python -m venv secactpy-env
+> source secactpy-env/bin/activate   # Linux/macOS
+> # secactpy-env\Scripts\activate    # Windows
+> ```
+
 ### From PyPI (Recommended)
 
 ```bash
