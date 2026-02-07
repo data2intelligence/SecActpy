@@ -116,11 +116,11 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "Skipping R installation"; \
     fi
 
-# Install CRAN packages
+# Install core CRAN packages
 ARG INSTALL_R
 RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
-        echo "Installing CRAN packages..." && \
+        echo "Installing core CRAN packages..." && \
         echo "========================================" && \
         R -e "options(repos = c(CRAN = 'https://cloud.r-project.org/')); \
               install.packages(c( \
@@ -142,61 +142,89 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
               ), dependencies = TRUE)"; \
     fi
 
-# Install Bioconductor packages
+# Install CRAN dependencies required by SecAct
+ARG INSTALL_R
+RUN if [ "$INSTALL_R" = "true" ]; then \
+        echo "========================================" && \
+        echo "Installing SecAct CRAN dependencies..." && \
+        echo "========================================" && \
+        R -e "options(repos = c(CRAN = 'https://cloud.r-project.org/')); \
+              install.packages(c( \
+                  'reshape2', \
+                  'patchwork', \
+                  'NMF', \
+                  'akima', \
+                  'gganimate', \
+                  'metap', \
+                  'circlize', \
+                  'ggalluvial', \
+                  'networkD3', \
+                  'survival', \
+                  'survminer', \
+                  'ggpubr', \
+                  'car', \
+                  'lme4', \
+                  'sp' \
+              ), dependencies = TRUE)"; \
+    fi
+
+# Install CRAN dependencies required by SpaCET
+ARG INSTALL_R
+RUN if [ "$INSTALL_R" = "true" ]; then \
+        echo "========================================" && \
+        echo "Installing SpaCET CRAN dependencies..." && \
+        echo "========================================" && \
+        R -e "options(repos = c(CRAN = 'https://cloud.r-project.org/')); \
+              install.packages(c( \
+                  'scatterpie', \
+                  'png', \
+                  'shiny', \
+                  'plotly', \
+                  'DT', \
+                  'factoextra', \
+                  'NbClust', \
+                  'cluster', \
+                  'pbmcapply', \
+                  'psych', \
+                  'arrow', \
+                  'RANN', \
+                  'sctransform' \
+              ), dependencies = TRUE)"; \
+    fi
+
+# Install Bioconductor packages (required by SecAct, SpaCET, and RidgeR)
 ARG INSTALL_R
 RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
         echo "Installing Bioconductor packages..." && \
         echo "========================================" && \
         R -e "BiocManager::install(ask = FALSE, update = FALSE)" && \
-        R -e "for (pkg in c('Biobase', 'S4Vectors', 'IRanges', 'SummarizedExperiment', 'SingleCellExperiment', 'rhdf5')) { \
-              cat('Installing', pkg, '...\n'); \
-              tryCatch({ \
-                  BiocManager::install(pkg, ask = FALSE, update = FALSE); \
-                  cat(pkg, 'OK\n') \
-              }, error = function(e) { \
-                  cat(pkg, 'FAILED:', conditionMessage(e), '\n') \
-              }) \
-            }"; \
+        R -e "BiocManager::install(c( \
+                  'Biobase', \
+                  'S4Vectors', \
+                  'IRanges', \
+                  'SummarizedExperiment', \
+                  'SingleCellExperiment', \
+                  'rhdf5', \
+                  'ComplexHeatmap', \
+                  'limma', \
+                  'UCell', \
+                  'BiRewire' \
+              ), ask = FALSE, update = FALSE)"; \
     fi
 
-# Install additional CRAN packages that SecAct/RidgeR might need
+# Install MUDAN from GitHub (required by SpaCET)
 ARG INSTALL_R
 RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
-        echo "Installing additional CRAN packages..." && \
-        echo "========================================" && \
-        R -e "options(repos = c(CRAN = 'https://cloud.r-project.org/')); \
-              pkgs <- c('openssl', 'curl', 'httr2', 'gitcreds', 'gh', 'usethis', 'testthat'); \
-              for (pkg in pkgs) { \
-                  tryCatch({ \
-                      if (!requireNamespace(pkg, quietly = TRUE)) { \
-                          install.packages(pkg, dependencies = TRUE); \
-                      }; \
-                      cat(pkg, 'OK\n') \
-                  }, error = function(e) cat(pkg, 'SKIP\n')) \
-              }"; \
-    fi
-
-# Install SecAct from GitHub (data2intelligence/SecAct)
-# Note: SecAct may fail due to dependencies - we continue anyway since SecActPy is the main package
-ARG INSTALL_R
-RUN if [ "$INSTALL_R" = "true" ]; then \
-        echo "========================================" && \
-        echo "Installing SecAct from GitHub..." && \
+        echo "Installing MUDAN from GitHub..." && \
         echo "========================================" && \
         R -e "options(timeout = 600); \
-              tryCatch({ \
-                  remotes::install_github('data2intelligence/SecAct', \
-                      dependencies = TRUE, \
-                      upgrade = 'never', \
-                      force = TRUE); \
-                  library(SecAct); \
-                  cat('SecAct version:', as.character(packageVersion('SecAct')), '\n') \
-              }, error = function(e) { \
-                  cat('SecAct installation failed:', conditionMessage(e), '\n'); \
-                  cat('This is OK - SecActPy provides equivalent functionality.\n') \
-              })"; \
+              remotes::install_github('JEFworks/MUDAN', \
+                  dependencies = TRUE, \
+                  upgrade = 'never', \
+                  force = TRUE); \
+              cat('MUDAN OK\n')"; \
     fi
 
 # Install RidgeR from GitHub (beibeiru/RidgeR)
@@ -206,16 +234,27 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "Installing RidgeR from GitHub..." && \
         echo "========================================" && \
         R -e "options(timeout = 600); \
-              tryCatch({ \
-                  remotes::install_github('beibeiru/RidgeR', \
-                      dependencies = TRUE, \
-                      upgrade = 'never', \
-                      force = TRUE); \
-                  library(RidgeR); \
-                  cat('RidgeR version:', as.character(packageVersion('RidgeR')), '\n') \
-              }, error = function(e) { \
-                  cat('RidgeR installation failed:', conditionMessage(e), '\n') \
-              })"; \
+              remotes::install_github('beibeiru/RidgeR', \
+                  dependencies = TRUE, \
+                  upgrade = 'never', \
+                  force = TRUE); \
+              library(RidgeR); \
+              cat('RidgeR version:', as.character(packageVersion('RidgeR')), '\n')"; \
+    fi
+
+# Install SecAct from GitHub (data2intelligence/SecAct)
+ARG INSTALL_R
+RUN if [ "$INSTALL_R" = "true" ]; then \
+        echo "========================================" && \
+        echo "Installing SecAct from GitHub..." && \
+        echo "========================================" && \
+        R -e "options(timeout = 600); \
+              remotes::install_github('data2intelligence/SecAct', \
+                  dependencies = TRUE, \
+                  upgrade = 'never', \
+                  force = TRUE); \
+              library(SecAct); \
+              cat('SecAct version:', as.character(packageVersion('SecAct')), '\n')"; \
     fi
 
 # Install SpaCET from GitHub (data2intelligence/SpaCET)
@@ -225,44 +264,32 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "Installing SpaCET from GitHub..." && \
         echo "========================================" && \
         R -e "options(timeout = 600); \
-              tryCatch({ \
-                  remotes::install_github('data2intelligence/SpaCET', \
-                      dependencies = TRUE, \
-                      upgrade = 'never', \
-                      force = TRUE); \
-                  library(SpaCET); \
-                  cat('SpaCET version:', as.character(packageVersion('SpaCET')), '\n') \
-              }, error = function(e) { \
-                  cat('SpaCET installation failed:', conditionMessage(e), '\n') \
-              })"; \
+              remotes::install_github('data2intelligence/SpaCET', \
+                  dependencies = TRUE, \
+                  upgrade = 'never', \
+                  force = TRUE); \
+              library(SpaCET); \
+              cat('SpaCET version:', as.character(packageVersion('SpaCET')), '\n')"; \
     fi
 
-# Verify R installation
+# Verify R installation (fail build if required packages are missing)
 ARG INSTALL_R
 RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
         echo "Verifying R installation..." && \
         echo "========================================" && \
         R -e "cat('R version:', R.version.string, '\n'); \
-              installed <- installed.packages()[, 'Package']; \
-              required <- c('Biobase', 'Matrix', 'remotes'); \
-              optional <- c('SecAct', 'RidgeR', 'SpaCET'); \
-              cat('\nRequired packages:\n'); \
+              required <- c('RidgeR', 'SecAct', 'SpaCET'); \
+              all_ok <- TRUE; \
               for (pkg in required) { \
-                  if (pkg %in% installed) { \
-                      cat('  ', pkg, 'OK\n') \
+                  if (requireNamespace(pkg, quietly = TRUE)) { \
+                      cat(pkg, as.character(packageVersion(pkg)), 'OK\n') \
                   } else { \
-                      cat('  ', pkg, 'MISSING\n') \
+                      cat(pkg, 'MISSING\n'); \
+                      all_ok <- FALSE \
                   } \
               }; \
-              cat('\nOptional packages:\n'); \
-              for (pkg in optional) { \
-                  if (pkg %in% installed) { \
-                      cat('  ', pkg, 'OK\n') \
-                  } else { \
-                      cat('  ', pkg, 'not installed\n') \
-                  } \
-              }"; \
+              if (!all_ok) stop('Required R packages are missing!')"; \
     fi
 
 # =============================================================================
