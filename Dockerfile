@@ -272,9 +272,9 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
 # Upgrade pip
 RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel
 
-# Install base Python packages
+# Install base Python packages (pin numpy<2.0.0 to avoid ABI breaking changes)
 RUN pip3 install --no-cache-dir \
-    numpy \
+    "numpy>=1.20.0,<2.0.0" \
     pandas \
     scipy \
     h5py \
@@ -294,7 +294,7 @@ RUN if [ "$USE_GPU" = "true" ]; then \
         echo "Skipping CuPy (CPU-only build)"; \
     fi
 
-# Install SecActPy from GitHub (official repository)
+# Install SecActPy from official GitHub repository (always latest version)
 RUN pip3 install --no-cache-dir git+https://github.com/data2intelligence/SecActpy.git
 
 # Verify Python installation
