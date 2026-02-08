@@ -179,6 +179,16 @@ from secactpy import secact_activity_inference_st
 # Download: https://zenodo.org/records/18520356/files/LIHC_CosMx_data.h5ad
 adata = ad.read_h5ad("LIHC_CosMx_data.h5ad")
 
+# Single-cell resolution (one score per cell)
+result = secact_activity_inference_st(
+    adata,
+    is_spot_level=True,         # Score each cell individually (default)
+    batch_size=5000,            # Process in chunks to limit memory
+    output_path="cosmx_sc_results.h5ad",  # Stream to disk
+    verbose=True
+)
+# result is None when output_path is set; load with ad.read_h5ad()
+
 # Cell-type resolution (pseudo-bulk by cell type)
 result = secact_activity_inference_st(
     adata,
