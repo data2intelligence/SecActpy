@@ -398,6 +398,7 @@ def secact_activity(
     use_gsl_rng: bool = True,
     use_cache: bool = False,
     batch_size: Optional[int] = None,
+    sparse_mode: bool = False,
     verbose: bool = False
 ) -> dict[str, Any]:
     """
@@ -439,6 +440,9 @@ def secact_activity(
     use_cache : bool, default=False
         Cache permutation tables to disk for reuse. Enable when running
         multiple analyses with the same gene count for faster repeated runs.
+    sparse_mode : bool, default=False
+        When True and Y is a sparse matrix, avoid densifying Y during
+        computation. More memory-efficient for very sparse data (<5% density).
     verbose : bool, default=False
         Print progress information.
 
@@ -535,7 +539,7 @@ def secact_activity(
 
     # Use batch processing if batch_size is specified
     if batch_size is not None:
-        from .ridge import ridge_batch
+        from .batch import ridge_batch
         ridge_result = ridge_batch(
             X=X,
             Y=Y,
@@ -546,6 +550,7 @@ def secact_activity(
             backend=backend,
             use_gsl_rng=use_gsl_rng,
             use_cache=use_cache,
+            sparse_mode=sparse_mode,
             verbose=verbose
         )
     else:
@@ -558,6 +563,7 @@ def secact_activity(
             backend=backend,
             use_gsl_rng=use_gsl_rng,
             use_cache=use_cache,
+            sparse_mode=sparse_mode,
             verbose=verbose
         )
 
@@ -859,6 +865,7 @@ def secact_activity_inference(
     output_path: Optional[str] = None,
     output_compression: Optional[str] = "gzip",
     sort_genes: bool = False,
+    sparse_mode: bool = False,
     verbose: bool = True
 ) -> Optional[dict[str, pd.DataFrame]]:
     """
@@ -1110,7 +1117,7 @@ def secact_activity_inference(
 
     # Use batch processing if batch_size is specified
     if batch_size is not None:
-        from .ridge import ridge_batch
+        from .batch import ridge_batch
         result = ridge_batch(
             X=X_scaled.values,
             Y=Y_scaled.values,
@@ -1125,6 +1132,7 @@ def secact_activity_inference(
             output_compression=output_compression,
             feature_names=X_scaled.columns.tolist(),
             sample_names=Y_scaled.columns.tolist(),
+            sparse_mode=sparse_mode,
             verbose=False
         )
     else:
@@ -1137,6 +1145,7 @@ def secact_activity_inference(
             backend=backend,
             use_gsl_rng=use_gsl_rng,
             use_cache=use_cache,
+            sparse_mode=sparse_mode,
             verbose=False
         )
 
@@ -1184,6 +1193,80 @@ def secact_activity_inference(
 
 
 # =============================================================================
+# Internal: Signature preparation for sparse pipeline
+# =============================================================================
+
+def _prepare_signature_for_sparse(
+    gene_names: list,
+    sig_matrix,
+    is_group_sig: bool,
+    is_group_cor: float,
+    sig_filter: bool,
+    sort_genes: bool,
+    verbose: bool
+) -> tuple:
+    """
+    Load, group, and align signature matrix for sparse Y pipeline.
+
+    Returns (X_scaled, common_genes, is_group_sig_flag) where X_scaled is
+    the z-scored signature DataFrame aligned to common genes.
+    """
+    from .signature import load_signature
+
+    # Load signature
+    if isinstance(sig_matrix, pd.DataFrame):
+        X = sig_matrix.copy()
+    elif isinstance(sig_matrix, str):
+        if sig_matrix.lower() in ["secact", "cytosig"]:
+            X = load_signature(sig_matrix)
+        else:
+            X = pd.read_csv(sig_matrix, sep='\t', index_col=0)
+    else:
+        raise ValueError("sig_matrix must be 'secact', 'cytosig', a file path, or a DataFrame")
+
+    if verbose:
+        print(f"  Loaded signature: {X.shape[0]} genes × {X.shape[1]} proteins")
+
+    # Filter signatures by available genes
+    gene_set = set(gene_names)
+    if sig_filter:
+        n_before = X.shape[1]
+        X = X.loc[:, X.columns.isin(gene_set)]
+        if verbose:
+            print(f"  sig_filter: kept {X.shape[1]} / {n_before} proteins")
+
+    # Group similar signatures
+    if is_group_sig:
+        if verbose:
+            print(f"  Grouping signatures (cor_threshold={is_group_cor})...")
+        X = group_signatures(X, cor_threshold=is_group_cor)
+        if verbose:
+            print(f"  Grouped into {X.shape[1]} signature groups")
+
+    # Find common genes (preserve signature order)
+    common_genes = [g for g in X.index if g in gene_set]
+
+    if sort_genes:
+        common_genes = sorted(common_genes)
+
+    if verbose:
+        print(f"  Common genes: {len(common_genes)}")
+
+    if len(common_genes) < 2:
+        raise ValueError(
+            f"Too few overlapping genes ({len(common_genes)}) between expression and signature. "
+            "Check that gene identifiers match (e.g., both use gene symbols)."
+        )
+
+    # Align and scale X only (Y stays sparse)
+    X_aligned = X.loc[common_genes].astype(np.float64)
+    X_scaled = (X_aligned - X_aligned.mean()) / X_aligned.std(ddof=1)
+    X_scaled = X_scaled.fillna(0)
+
+    return X_scaled, common_genes
+
+
+# =============================================================================
 # scRNAseq Activity Inference (matching R's SecAct.activity.inference.scRNAseq)
 # =============================================================================
 
@@ -1205,6 +1288,7 @@ def secact_activity_inference_scrnaseq(
     output_path: Optional[str] = None,
     output_compression: Optional[str] = "gzip",
     sort_genes: bool = False,
+    sparse_mode: bool = False,
     verbose: bool = False
 ) -> Optional[dict[str, Any]]:
     """
@@ -1472,9 +1556,99 @@ def secact_activity_inference_scrnaseq(
         if verbose:
             print("  Normalizing per cell (CPM/10)...")
 
+        if sparse_mode and sparse.issparse(counts):
+            # --- Sparse end-to-end path ---
+            # CPM and log2 are zero-preserving, so Y stays sparse
+            col_sums = np.asarray(counts.sum(axis=0)).ravel()
+            from scipy.sparse import diags as _sp_diags
+            scaling = _sp_diags(1e5 / col_sums)
+            expr_sparse = counts.astype(np.float64) @ scaling  # sparse CPM
+            expr_sparse = expr_sparse.tocsc()
+            expr_sparse.data = np.log2(expr_sparse.data + 1)  # sparse log2
+
+            # Prepare signature (load, group, find common genes, z-score X)
+            X_scaled, common_genes = _prepare_signature_for_sparse(
+                gene_names=gene_names,
+                sig_matrix=sig_matrix,
+                is_group_sig=is_group_sig,
+                is_group_cor=is_group_cor,
+                sig_filter=sig_filter,
+                sort_genes=sort_genes,
+                verbose=verbose
+            )
+
+            # Subset sparse Y to common genes
+            gene_to_idx = {g: i for i, g in enumerate(gene_names)}
+            common_idx = [gene_to_idx[g] for g in common_genes]
+            Y_sparse = expr_sparse[common_idx, :]
+
+            if verbose:
+                print(f"  Sparse Y: {Y_sparse.shape}, nnz={Y_sparse.nnz}, "
+                      f"density={Y_sparse.nnz / (Y_sparse.shape[0] * Y_sparse.shape[1]):.4f}")
+
+            # Determine batch_size
+            _batch_size = batch_size if batch_size is not None else 5000
+
+            # Run ridge_batch directly with sparse_mode + row_center
+            from .batch import ridge_batch
+            result = ridge_batch(
+                X=X_scaled.values,
+                Y=Y_sparse,
+                lambda_=lambda_,
+                n_rand=n_rand,
+                seed=seed,
+                batch_size=_batch_size,
+                backend=backend,
+                use_gsl_rng=use_gsl_rng,
+                use_cache=use_cache,
+                output_path=output_path,
+                output_compression=output_compression,
+                feature_names=X_scaled.columns.tolist(),
+                sample_names=cell_names,
+                sparse_mode=True,
+                row_center=True,
+                verbose=verbose
+            )
+
+            # Format results
+            if result is None:
+                if verbose:
+                    print(f"  Results streamed to {output_path}")
+                return None
+
+            feature_names = X_scaled.columns.tolist()
+            beta_df = pd.DataFrame(result['beta'], index=feature_names, columns=cell_names)
+            se_df = pd.DataFrame(result['se'], index=feature_names, columns=cell_names)
+            zscore_df = pd.DataFrame(result['zscore'], index=feature_names, columns=cell_names)
+            pvalue_df = pd.DataFrame(result['pvalue'], index=feature_names, columns=cell_names)
+
+            if is_group_sig:
+                if verbose:
+                    print("  Expanding grouped signatures...")
+                beta_df = expand_rows(beta_df)
+                se_df = expand_rows(se_df)
+                zscore_df = expand_rows(zscore_df)
+                pvalue_df = expand_rows(pvalue_df)
+
+                row_order = sorted(beta_df.index)
+                beta_df = beta_df.loc[row_order]
+                se_df = se_df.loc[row_order]
+                zscore_df = zscore_df.loc[row_order]
+                pvalue_df = pvalue_df.loc[row_order]
+
+            if verbose:
+                print(f"  Result shape: {beta_df.shape}")
+
+            return {
+                'beta': beta_df,
+                'se': se_df,
+                'zscore': zscore_df,
+                'pvalue': pvalue_df
+            }
+
+        # --- Dense path (default) ---
         if sparse.issparse(counts):
             col_sums = np.asarray(counts.sum(axis=0)).ravel()
-            # Normalize - convert to dense for simplicity
             expr = counts.toarray().astype(np.float64)
         else:
             col_sums = counts.sum(axis=0)
@@ -1483,7 +1657,7 @@ def secact_activity_inference_scrnaseq(
         expr = expr / col_sums * 1e5  # Counts per 100k (like R)
 
         sample_names = cell_names
-        
+
         # Log2 transform
         expr = np.log2(expr + 1)
 
@@ -1515,6 +1689,7 @@ def secact_activity_inference_scrnaseq(
         output_path=output_path,
         output_compression=output_compression,
         sort_genes=sort_genes,
+        sparse_mode=sparse_mode,
         verbose=verbose
     )
 
@@ -1709,6 +1884,7 @@ def secact_activity_inference_st(
     output_path: Optional[str] = None,
     output_compression: Optional[str] = "gzip",
     sort_genes: bool = False,
+    sparse_mode: bool = False,
     verbose: bool = False
 ) -> Optional[dict[str, Any]]:
     """
@@ -1928,9 +2104,104 @@ def secact_activity_inference_st(
     n_genes = len(gene_names)
 
     # --- Step 5: Normalize (counts per scale_factor) ---
+    # Sparse end-to-end path: spot-level, no control, sparse input
+    if (sparse_mode and sparse.issparse(counts) and is_spot_level
+            and input_control is None
+            and (cell_type_col is None or is_spot_level)):
+        # CPM and log2 are zero-preserving → Y stays sparse
+        col_sums = np.asarray(counts.sum(axis=0)).ravel()
+        from scipy.sparse import diags as _sp_diags
+        scaling = _sp_diags(scale_factor / col_sums)
+        expr_sparse = counts.astype(np.float64) @ scaling  # sparse CPM
+        expr_sparse = expr_sparse.tocsc()
+        expr_sparse.data = np.log2(expr_sparse.data + 1)  # sparse log2
+
+        if verbose:
+            print(f"  Normalized to counts per {scale_factor:.0e} (sparse)")
+
+        # Prepare signature (load, group, find common genes, z-score X)
+        X_scaled, common_genes = _prepare_signature_for_sparse(
+            gene_names=gene_names,
+            sig_matrix=sig_matrix,
+            is_group_sig=is_group_sig,
+            is_group_cor=is_group_cor,
+            sig_filter=sig_filter,
+            sort_genes=sort_genes,
+            verbose=verbose
+        )
+
+        # Subset sparse Y to common genes
+        gene_to_idx = {g: i for i, g in enumerate(gene_names)}
+        common_idx = [gene_to_idx[g] for g in common_genes]
+        Y_sparse = expr_sparse[common_idx, :]
+
+        if verbose:
+            print(f"  Sparse Y: {Y_sparse.shape}, nnz={Y_sparse.nnz}, "
+                  f"density={Y_sparse.nnz / (Y_sparse.shape[0] * Y_sparse.shape[1]):.4f}")
+
+        # Determine batch_size
+        _batch_size = batch_size if batch_size is not None else 5000
+
+        # Run ridge_batch directly with sparse_mode + row_center
+        from .batch import ridge_batch
+        result = ridge_batch(
+            X=X_scaled.values,
+            Y=Y_sparse,
+            lambda_=lambda_,
+            n_rand=n_rand,
+            seed=seed,
+            batch_size=_batch_size,
+            backend=backend,
+            use_gsl_rng=use_gsl_rng,
+            use_cache=use_cache,
+            output_path=output_path,
+            output_compression=output_compression,
+            feature_names=X_scaled.columns.tolist(),
+            sample_names=spot_names,
+            sparse_mode=True,
+            row_center=True,
+            verbose=verbose
+        )
+
+        # Format results
+        if result is None:
+            if verbose:
+                print(f"  Results streamed to {output_path}")
+            return None
+
+        feature_names = X_scaled.columns.tolist()
+        beta_df = pd.DataFrame(result['beta'], index=feature_names, columns=spot_names)
+        se_df = pd.DataFrame(result['se'], index=feature_names, columns=spot_names)
+        zscore_df = pd.DataFrame(result['zscore'], index=feature_names, columns=spot_names)
+        pvalue_df = pd.DataFrame(result['pvalue'], index=feature_names, columns=spot_names)
+
+        if is_group_sig:
+            if verbose:
+                print("  Expanding grouped signatures...")
+            beta_df = expand_rows(beta_df)
+            se_df = expand_rows(se_df)
+            zscore_df = expand_rows(zscore_df)
+            pvalue_df = expand_rows(pvalue_df)
+
+            row_order = sorted(beta_df.index)
+            beta_df = beta_df.loc[row_order]
+            se_df = se_df.loc[row_order]
+            zscore_df = zscore_df.loc[row_order]
+            pvalue_df = pvalue_df.loc[row_order]
+
+        if verbose:
+            print(f"  Result shape: {beta_df.shape}")
+
+        return {
+            'beta': beta_df,
+            'se': se_df,
+            'zscore': zscore_df,
+            'pvalue': pvalue_df
+        }
+
+    # --- Dense path (default) ---
     if sparse.issparse(counts):
         col_sums = np.asarray(counts.sum(axis=0)).ravel()
-        # Convert to dense for normalization
         expr = counts.toarray().astype(np.float64)
     else:
         col_sums = np.sum(counts, axis=0)
@@ -2057,6 +2328,7 @@ def secact_activity_inference_st(
         output_path=output_path,
         output_compression=output_compression,
         sort_genes=sort_genes,
+        sparse_mode=sparse_mode,
         verbose=verbose
     )
 
