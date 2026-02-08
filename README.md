@@ -600,7 +600,8 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Changelog
 
-### v0.2.2 (In Development)
+### v0.2.2
+- **Fix**: `ImportError` when using `batch_size` with `secact_activity_inference()` or `secact_activity_inference_st()`
 - `sparse_mode=True` for memory-efficient processing of sparse Y matrices
 - End-to-end sparse pipeline in scrnaseq/ST: sparse CPM, log2, and in-flight
   row-mean centering + column z-scoring without densification

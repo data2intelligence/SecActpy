@@ -5,7 +5,7 @@ All notable changes to SecActPy will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.2] - Unreleased
+## [0.2.2] - 2026-02-08
 
 ### Added
 - `sparse_mode=True` parameter in `ridge()`, `ridge_batch()`, and all
@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   centering without densifying Y. Computes row-centered column statistics
   from sparse Y analytically and applies `T @ row_means` correction per
   permutation.
+
+### Fixed
+- `from .ridge import ridge_batch` in `inference.py` — `ridge_batch` is
+  defined in `batch.py`, not `ridge.py`. This caused `ImportError` when
+  calling `secact_activity_inference()` or `secact_activity_inference_st()`
+  with `batch_size` set.
 
 ## [0.2.1] - 2026-02-08
 
