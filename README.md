@@ -206,6 +206,11 @@ through the full permutation-testing pipeline independently, and partial results
 are concatenated at the end. **The final output is mathematically identical** to
 processing all samples at once — only peak memory usage is reduced.
 
+All three high-level functions support `batch_size` and `output_path`:
+- `secact_activity_inference()` — bulk RNA-seq
+- `secact_activity_inference_scrnaseq()` — scRNA-seq
+- `secact_activity_inference_st()` — spatial transcriptomics
+
 Set `batch_size` to enable it:
 
 ```python
@@ -214,6 +219,10 @@ result = secact_activity_inference(expr_df, ...)
 
 # With batch processing: 5000 samples per chunk
 result = secact_activity_inference(expr_df, ..., batch_size=5000)
+
+# Works the same way for scRNA-seq and ST:
+result = secact_activity_inference_scrnaseq(adata, ..., batch_size=5000)
+result = secact_activity_inference_st(adata, ..., batch_size=5000)
 ```
 
 #### In-memory vs streaming output
@@ -227,12 +236,19 @@ se — each of shape n_proteins × n_samples) may not fit in memory. **Streaming
 output** solves this: set `output_path` to write each batch's results directly
 to an HDF5 file on disk as it completes. The function returns `None` in this
 mode — no results are held in memory. You load them back from the file when
-needed.
+needed. All three high-level functions support this.
 
 | Mode | Parameter | Return value | Memory for output |
 |------|-----------|--------------|-------------------|
 | In-memory (default) | `output_path=None` | `dict` of DataFrames | All results in RAM |
 | Streaming | `output_path="results.h5ad"` | `None` | Only one batch at a time |
+
+```python
+# Streaming works with any high-level function:
+secact_activity_inference(..., batch_size=5000, output_path="bulk_results.h5ad")
+secact_activity_inference_scrnaseq(..., batch_size=5000, output_path="sc_results.h5ad")
+secact_activity_inference_st(..., batch_size=5000, output_path="st_results.h5ad")
+```
 
 #### Example: batch processing with `secact_activity_inference`
 
@@ -314,11 +330,14 @@ result = ridge_batch(X, Y_dense, batch_size=5000)
 
 ### High-Level Functions
 
+All three inference functions support `batch_size`, `output_path`, and
+`output_compression` for large-scale and streaming workflows.
+
 | Function | Description |
 |----------|-------------|
 | `secact_activity_inference()` | Bulk RNA-seq inference |
-| `secact_activity_inference_st()` | Spatial transcriptomics inference |
 | `secact_activity_inference_scrnaseq()` | scRNA-seq inference |
+| `secact_activity_inference_st()` | Spatial transcriptomics inference |
 | `load_signature(name='secact')` | Load built-in signature matrix |
 
 ### Core Functions
@@ -351,10 +370,12 @@ result = ridge_batch(X, Y_dense, batch_size=5000)
 
 ### Batch Processing Parameters
 
+Supported by all three high-level inference functions and `ridge_batch()`.
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `batch_size` | `5000` | Samples per batch |
-| `output_path` | `None` | Stream results to H5AD file |
+| `batch_size` | `None` | Samples per batch (`None` = all at once) |
+| `output_path` | `None` | Stream results to H5AD file (requires `batch_size`) |
 | `output_compression` | `"gzip"` | Compression: "gzip", "lzf", or None |
 
 ## GPU Acceleration
