@@ -151,7 +151,7 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         R -e "options(repos = c(CRAN = Sys.getenv('RSPM', 'https://cloud.r-project.org/'))); \
               install.packages(c( \
                   'devtools', \
-                  'Matrix', 'Rcpp', 'RcppArmadillo', 'RcppEigen', \
+                  'Matrix', 'Rcpp', 'RcppArmadillo', 'RcppEigen', 'RcppParallel', \
                   'ggplot2', 'dplyr', 'tidyr', 'data.table', \
                   'httr', 'jsonlite', 'R6', 'crayon', \
                   'reshape2', 'patchwork', 'NMF', 'akima', \
