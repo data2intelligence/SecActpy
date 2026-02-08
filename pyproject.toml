@@ -78,6 +78,9 @@ include-package-data = true
 [tool.setuptools.package-data]
 "secactpy.data" = ["*.tsv.gz", "*.csv.gz", "*.parquet"]
 
+[tool.setuptools.exclude-package-data]
+"secactpy.data" = ["LinCytoSig.tsv.gz"]
+
 [tool.black]
 line-length = 100
 target-version = ["py39", "py310", "py311", "py312"]
