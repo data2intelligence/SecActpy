@@ -190,7 +190,7 @@ jobs:
             ${{ env.DOCKERHUB_REPO }}:${{ steps.version.outputs.version }}-with-r
           cache-from: type=gha
           cache-to: type=gha,mode=max
-        timeout-minutes: 60  # R builds take longer
+        timeout-minutes: 120  # R builds take longer
 
   # ===========================================================================
   # GPU + R Image (Python + CuPy + R SecAct/RidgeR/SpaCET)
@@ -235,7 +235,7 @@ jobs:
             ${{ env.DOCKERHUB_REPO }}:${{ steps.version.outputs.version }}-gpu-with-r
           cache-from: type=gha
           cache-to: type=gha,mode=max
-        timeout-minutes: 60  # R builds take longer
+        timeout-minutes: 120  # R builds take longer
 
   # ===========================================================================
   # Update Docker Hub README

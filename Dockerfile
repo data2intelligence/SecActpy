@@ -116,80 +116,29 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "Skipping R installation"; \
     fi
 
-# Install core CRAN packages
-ARG INSTALL_R
-RUN if [ "$INSTALL_R" = "true" ]; then \
-        echo "========================================" && \
-        echo "Installing core CRAN packages..." && \
-        echo "========================================" && \
-        R -e "options(repos = c(CRAN = 'https://cloud.r-project.org/')); \
-              install.packages(c( \
-                  'remotes', \
-                  'BiocManager', \
-                  'devtools', \
-                  'Matrix', \
-                  'Rcpp', \
-                  'RcppArmadillo', \
-                  'RcppEigen', \
-                  'ggplot2', \
-                  'dplyr', \
-                  'tidyr', \
-                  'data.table', \
-                  'httr', \
-                  'jsonlite', \
-                  'R6', \
-                  'crayon' \
-              ), dependencies = TRUE)"; \
-    fi
+# Use Posit Package Manager for pre-compiled R binaries (much faster than source)
+ENV RSPM="https://packagemanager.posit.co/cran/__linux__/jammy/latest"
 
-# Install CRAN dependencies required by SecAct
+# Install all CRAN dependencies in one step (pre-compiled binaries)
 ARG INSTALL_R
 RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
-        echo "Installing SecAct CRAN dependencies..." && \
+        echo "Installing CRAN packages (binary)..." && \
         echo "========================================" && \
-        R -e "options(repos = c(CRAN = 'https://cloud.r-project.org/')); \
+        R -e "options(repos = c(CRAN = Sys.getenv('RSPM', 'https://cloud.r-project.org/'))); \
               install.packages(c( \
-                  'reshape2', \
-                  'patchwork', \
-                  'NMF', \
-                  'akima', \
-                  'gganimate', \
-                  'metap', \
-                  'circlize', \
-                  'ggalluvial', \
-                  'networkD3', \
-                  'survival', \
-                  'survminer', \
-                  'ggpubr', \
-                  'car', \
-                  'lme4', \
-                  'sp' \
-              ), dependencies = TRUE)"; \
-    fi
-
-# Install CRAN dependencies required by SpaCET
-ARG INSTALL_R
-RUN if [ "$INSTALL_R" = "true" ]; then \
-        echo "========================================" && \
-        echo "Installing SpaCET CRAN dependencies..." && \
-        echo "========================================" && \
-        R -e "options(repos = c(CRAN = 'https://cloud.r-project.org/')); \
-              install.packages(c( \
-                  'scatterpie', \
-                  'png', \
-                  'shiny', \
-                  'plotly', \
-                  'DT', \
-                  'factoextra', \
-                  'NbClust', \
-                  'cluster', \
-                  'pbmcapply', \
-                  'psych', \
-                  'arrow', \
-                  'RANN', \
-                  'sctransform' \
-              ), dependencies = TRUE)"; \
+                  'remotes', 'BiocManager', 'devtools', \
+                  'Matrix', 'Rcpp', 'RcppArmadillo', 'RcppEigen', \
+                  'ggplot2', 'dplyr', 'tidyr', 'data.table', \
+                  'httr', 'jsonlite', 'R6', 'crayon', \
+                  'reshape2', 'patchwork', 'NMF', 'akima', \
+                  'gganimate', 'metap', 'circlize', 'ggalluvial', \
+                  'networkD3', 'survival', 'survminer', 'ggpubr', \
+                  'car', 'lme4', 'sp', \
+                  'scatterpie', 'png', 'shiny', 'plotly', 'DT', \
+                  'factoextra', 'NbClust', 'cluster', 'pbmcapply', \
+                  'psych', 'arrow', 'RANN', 'sctransform' \
+              ), dependencies = TRUE, Ncpus = parallel::detectCores())"; \
     fi
 
 # Install Bioconductor packages (required by SecAct, SpaCET, and RidgeR)
@@ -200,17 +149,11 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
         R -e "BiocManager::install(ask = FALSE, update = FALSE)" && \
         R -e "BiocManager::install(c( \
-                  'Biobase', \
-                  'S4Vectors', \
-                  'IRanges', \
-                  'SummarizedExperiment', \
-                  'SingleCellExperiment', \
-                  'rhdf5', \
-                  'ComplexHeatmap', \
-                  'limma', \
-                  'UCell', \
-                  'BiRewire' \
-              ), ask = FALSE, update = FALSE)"; \
+                  'Biobase', 'S4Vectors', 'IRanges', \
+                  'SummarizedExperiment', 'SingleCellExperiment', \
+                  'rhdf5', 'ComplexHeatmap', 'limma', \
+                  'UCell', 'BiRewire' \
+              ), ask = FALSE, update = FALSE, Ncpus = parallel::detectCores())"; \
     fi
 
 # Install MUDAN from GitHub (required by SpaCET)
