@@ -104,8 +104,12 @@ ENV LC_ALL=en_US.UTF-8
 ARG INSTALL_R
 RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
-        echo "Installing R from Ubuntu repos..." && \
+        echo "Installing R from CRAN repository..." && \
         echo "========================================" && \
+        wget -qO- https://cloud.r-project.org/bin/linux/ubuntu/marutter_pubkey.asc \
+            | tee -a /etc/apt/trusted.gpg.d/cran_ubuntu_key.asc && \
+        echo "deb https://cloud.r-project.org/bin/linux/ubuntu jammy-cran40/" \
+            | tee /etc/apt/sources.list.d/cran.list && \
         apt-get update && \
         apt-get install -y --no-install-recommends \
             r-base \
@@ -119,7 +123,26 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
 # Use Posit Package Manager for pre-compiled R binaries (much faster than source)
 ENV RSPM="https://packagemanager.posit.co/cran/__linux__/jammy/latest"
 
+# Install Bioconductor packages FIRST (required by CRAN packages like NMF,
+# and by SecAct, SpaCET, and RidgeR)
+ARG INSTALL_R
+RUN if [ "$INSTALL_R" = "true" ]; then \
+        echo "========================================" && \
+        echo "Installing BiocManager and Bioconductor packages..." && \
+        echo "========================================" && \
+        R -e "options(repos = c(CRAN = Sys.getenv('RSPM', 'https://cloud.r-project.org/'))); \
+              install.packages(c('remotes', 'BiocManager'), Ncpus = parallel::detectCores())" && \
+        R -e "BiocManager::install(ask = FALSE, update = FALSE)" && \
+        R -e "BiocManager::install(c( \
+                  'Biobase', 'S4Vectors', 'IRanges', \
+                  'SummarizedExperiment', 'SingleCellExperiment', \
+                  'rhdf5', 'ComplexHeatmap', 'limma', \
+                  'UCell', 'BiRewire' \
+              ), ask = FALSE, update = FALSE, Ncpus = parallel::detectCores())"; \
+    fi
+
 # Install all CRAN dependencies in one step (pre-compiled binaries)
+# NMF depends on Biobase (Bioconductor), so Bioconductor must be installed first
 ARG INSTALL_R
 RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
@@ -127,7 +150,7 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
         R -e "options(repos = c(CRAN = Sys.getenv('RSPM', 'https://cloud.r-project.org/'))); \
               install.packages(c( \
-                  'remotes', 'BiocManager', 'devtools', \
+                  'devtools', \
                   'Matrix', 'Rcpp', 'RcppArmadillo', 'RcppEigen', \
                   'ggplot2', 'dplyr', 'tidyr', 'data.table', \
                   'httr', 'jsonlite', 'R6', 'crayon', \
@@ -141,22 +164,8 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
               ), dependencies = TRUE, Ncpus = parallel::detectCores())"; \
     fi
 
-# Install Bioconductor packages (required by SecAct, SpaCET, and RidgeR)
-ARG INSTALL_R
-RUN if [ "$INSTALL_R" = "true" ]; then \
-        echo "========================================" && \
-        echo "Installing Bioconductor packages..." && \
-        echo "========================================" && \
-        R -e "BiocManager::install(ask = FALSE, update = FALSE)" && \
-        R -e "BiocManager::install(c( \
-                  'Biobase', 'S4Vectors', 'IRanges', \
-                  'SummarizedExperiment', 'SingleCellExperiment', \
-                  'rhdf5', 'ComplexHeatmap', 'limma', \
-                  'UCell', 'BiRewire' \
-              ), ask = FALSE, update = FALSE, Ncpus = parallel::detectCores())"; \
-    fi
-
 # Install MUDAN from GitHub (required by SpaCET)
+# Use dependencies=FALSE since all deps are pre-installed above
 ARG INSTALL_R
 RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
@@ -164,8 +173,7 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
         R -e "options(timeout = 600); \
               remotes::install_github('JEFworks/MUDAN', \
-                  dependencies = TRUE, \
-                  upgrade = 'never', \
+                  dependencies = FALSE, \
                   force = TRUE); \
               cat('MUDAN OK\n')"; \
     fi
@@ -178,8 +186,7 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
         R -e "options(timeout = 600); \
               remotes::install_github('beibeiru/RidgeR', \
-                  dependencies = TRUE, \
-                  upgrade = 'never', \
+                  dependencies = FALSE, \
                   force = TRUE); \
               library(RidgeR); \
               cat('RidgeR version:', as.character(packageVersion('RidgeR')), '\n')"; \
@@ -193,8 +200,7 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
         R -e "options(timeout = 600); \
               remotes::install_github('data2intelligence/SecAct', \
-                  dependencies = TRUE, \
-                  upgrade = 'never', \
+                  dependencies = FALSE, \
                   force = TRUE); \
               library(SecAct); \
               cat('SecAct version:', as.character(packageVersion('SecAct')), '\n')"; \
@@ -208,8 +214,7 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
         R -e "options(timeout = 600); \
               remotes::install_github('data2intelligence/SpaCET', \
-                  dependencies = TRUE, \
-                  upgrade = 'never', \
+                  dependencies = FALSE, \
                   force = TRUE); \
               library(SpaCET); \
               cat('SpaCET version:', as.character(packageVersion('SpaCET')), '\n')"; \
