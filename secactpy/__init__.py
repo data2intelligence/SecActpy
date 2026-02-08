@@ -11,6 +11,9 @@ Quick Start (Bulk RNA-seq):
     >>> from secactpy import secact_activity_inference
     >>>
     >>> # From file path (auto-detect format: CSV, TSV, TXT)
+    >>> # Note: Set is_differential=True for log fold-change input.
+    >>> # For single-column input with no control, row-mean centering
+    >>> # is automatically skipped (it would produce all zeros).
     >>> result = secact_activity_inference(
     ...     "diff_expression.csv",  # or .tsv, .txt
     ...     is_differential=True,

@@ -887,6 +887,8 @@ def secact_activity_inference(
         If None and is_differential=False, uses mean of input_profile as control.
     is_differential : bool, default=False
         If True, input_profile is already differential expression (log fold-change).
+        For single-column input with no control, centering is automatically
+        skipped (since row-mean centering would produce all zeros).
     is_paired : bool, default=False
         If True, perform paired differential calculation.
     is_single_sample_level : bool, default=False
@@ -993,9 +995,23 @@ def secact_activity_inference(
             Y.columns = ["Change"]
     else:
         if input_profile_control is None:
-            # Center by row means
-            row_means = input_profile.mean(axis=1)
-            Y = input_profile.subtract(row_means, axis=0)
+            if input_profile.shape[1] == 1:
+                # Single column: centering by row means would produce all
+                # zeros because each row's mean equals its own value.
+                # Skip centering and treat the column as-is.
+                warnings.warn(
+                    "Single-column input with no control: skipping row-mean "
+                    "centering (would produce all zeros). The column is used "
+                    "as-is. Set is_differential=True to silence this warning.",
+                    stacklevel=2,
+                )
+                Y = input_profile.copy()
+                if Y.columns[0] != "Change":
+                    Y.columns = ["Change"]
+            else:
+                # Center by row means
+                row_means = input_profile.mean(axis=1)
+                Y = input_profile.subtract(row_means, axis=0)
         else:
             if is_paired:
                 # Paired differences

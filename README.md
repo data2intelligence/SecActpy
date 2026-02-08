@@ -120,6 +120,10 @@ pvalues = result['pvalue']     # P-values
 coefficients = result['beta']  # Regression coefficients
 ```
 
+> **Note:** Set `is_differential=True` when the input is already log fold-change data.
+> For single-column input with no control, row-mean centering is automatically skipped
+> (it would produce all zeros).
+
 ### Example 2: scRNA-seq Analysis
 
 ```python
