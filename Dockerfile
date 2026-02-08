@@ -80,6 +80,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgdal-dev \
     libgeos-dev \
     libproj-dev \
+    # For qqconf (dependency of metap)
+    libfftw3-dev \
     # For RcppParallel (Intel TBB)
     libtbb-dev \
     # For R Matrix package
@@ -146,7 +148,7 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
                   'SummarizedExperiment', 'SingleCellExperiment', \
                   'rhdf5', 'ComplexHeatmap', 'limma', \
                   'UCell', 'BiRewire', \
-                  'sva' \
+                  'sva', 'multtest' \
               ); \
               BiocManager::install(bioc_pkgs, ask = FALSE, update = FALSE, \
                   Ncpus = parallel::detectCores()); \
@@ -454,5 +456,5 @@ CMD ["/bin/bash"]
 
 LABEL maintainer="Seongyong Park <https://github.com/psychemistz>"
 LABEL description="SecActPy - Secreted Protein Activity Inference (CPU/GPU)"
-LABEL version="0.2.0"
+LABEL version="0.2.1"
 LABEL org.opencontainers.image.source="https://github.com/data2intelligence/SecActpy"
