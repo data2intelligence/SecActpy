@@ -80,6 +80,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgdal-dev \
     libgeos-dev \
     libproj-dev \
+    # For RcppParallel (Intel TBB)
+    libtbb-dev \
     # For R Matrix package
     liblapack-dev \
     libblas-dev \
@@ -123,6 +125,10 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
 
 # Use Posit Package Manager for pre-compiled R binaries (much faster than source)
 ENV RSPM="https://packagemanager.posit.co/cran/__linux__/jammy/latest"
+
+# Tell arrow to download pre-built C++ binaries instead of compiling from source
+ENV NOT_CRAN=true
+ENV LIBARROW_BINARY=true
 
 # Install Bioconductor packages FIRST (required by CRAN packages like NMF,
 # and by SecAct, SpaCET, and RidgeR)
@@ -186,8 +192,10 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
               ); \
               missing <- required[!sapply(required, requireNamespace, quietly = TRUE)]; \
               if (length(missing) > 0) { \
-                  cat('Missing packages:', paste(missing, collapse=', '), '\n'); \
-                  cat('Attempting fallback install via BiocManager...\n'); \
+                  cat('WARNING:', length(missing), 'packages missing after initial install:\n'); \
+                  for (pkg in missing) cat('  -', pkg, '\n'); \
+                  cat('Attempting fallback install via BiocManager with RSPM...\n'); \
+                  options(repos = c(CRAN = Sys.getenv('RSPM', 'https://cloud.r-project.org/'))); \
                   BiocManager::install(missing, ask = FALSE, update = FALSE, \
                       Ncpus = parallel::detectCores()); \
               }; \
