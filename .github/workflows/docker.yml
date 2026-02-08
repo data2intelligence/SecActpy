@@ -184,6 +184,7 @@ jobs:
           build-args: |
             USE_GPU=false
             INSTALL_R=true
+            GITHUB_PAT=${{ github.token }}
           tags: |
             ${{ env.DOCKERHUB_REPO }}:with-r
             ${{ env.DOCKERHUB_REPO }}:cpu-with-r
@@ -230,6 +231,7 @@ jobs:
           build-args: |
             USE_GPU=true
             INSTALL_R=true
+            GITHUB_PAT=${{ github.token }}
           tags: |
             ${{ env.DOCKERHUB_REPO }}:gpu-with-r
             ${{ env.DOCKERHUB_REPO }}:${{ steps.version.outputs.version }}-gpu-with-r

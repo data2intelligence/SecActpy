@@ -27,6 +27,7 @@
 # Build arguments
 ARG USE_GPU=false
 ARG INSTALL_R=false
+ARG GITHUB_PAT=""
 
 # =============================================================================
 # Base Image Selection
@@ -137,7 +138,8 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
                   'Biobase', 'S4Vectors', 'IRanges', \
                   'SummarizedExperiment', 'SingleCellExperiment', \
                   'rhdf5', 'ComplexHeatmap', 'limma', \
-                  'UCell', 'BiRewire' \
+                  'UCell', 'BiRewire', \
+                  'sva' \
               ), ask = FALSE, update = FALSE, Ncpus = parallel::detectCores())"; \
     fi
 
@@ -160,22 +162,67 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
                   'car', 'lme4', 'sp', \
                   'scatterpie', 'png', 'shiny', 'plotly', 'DT', \
                   'factoextra', 'NbClust', 'cluster', 'pbmcapply', \
-                  'psych', 'arrow', 'RANN', 'sctransform' \
+                  'psych', 'arrow', 'RANN', 'sctransform', \
+                  'irlba', 'igraph', 'Rtsne', 'ROCR', 'entropy' \
               ), dependencies = TRUE, Ncpus = parallel::detectCores())"; \
     fi
 
-# Install MUDAN from GitHub (required by SpaCET)
-# Use dependencies=FALSE since all deps are pre-installed above
+# Verify all pre-installed R dependencies are present
+# install.packages() does NOT error on individual failures, so check explicitly
+ARG INSTALL_R
+RUN if [ "$INSTALL_R" = "true" ]; then \
+        echo "========================================" && \
+        echo "Verifying pre-installed R dependencies..." && \
+        echo "========================================" && \
+        R -e "required <- c( \
+                  'Matrix', 'ggplot2', 'reshape2', 'patchwork', 'NMF', 'akima', \
+                  'gganimate', 'metap', 'circlize', 'ggalluvial', 'networkD3', \
+                  'survival', 'survminer', 'ComplexHeatmap', \
+                  'RcppParallel', \
+                  'jsonlite', 'scatterpie', 'png', 'shiny', 'plotly', 'DT', \
+                  'factoextra', 'NbClust', 'cluster', 'pbmcapply', 'psych', \
+                  'arrow', 'RANN', 'sctransform', 'UCell', 'BiRewire', 'limma', \
+                  'sva', 'irlba', 'igraph', 'Rtsne', 'ROCR', 'entropy' \
+              ); \
+              missing <- required[!sapply(required, requireNamespace, quietly = TRUE)]; \
+              if (length(missing) > 0) { \
+                  cat('Missing packages:', paste(missing, collapse=', '), '\n'); \
+                  cat('Attempting fallback install via BiocManager...\n'); \
+                  BiocManager::install(missing, ask = FALSE, update = FALSE, \
+                      Ncpus = parallel::detectCores()); \
+              }; \
+              still_missing <- required[!sapply(required, requireNamespace, quietly = TRUE)]; \
+              if (length(still_missing) > 0) { \
+                  stop(paste('FATAL: Cannot install required packages:', \
+                      paste(still_missing, collapse=', '))) \
+              } else { \
+                  cat('All', length(required), 'required R packages verified OK\n') \
+              }"; \
+    fi
+
+# Install GitHub R packages
+# GITHUB_PAT increases API rate limit from 60 to 5000 per hour
+# Fallback to dependencies=NA if dependencies=FALSE fails
+ARG GITHUB_PAT
 ARG INSTALL_R
 RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
         echo "Installing MUDAN from GitHub..." && \
         echo "========================================" && \
         R -e "options(timeout = 600); \
-              remotes::install_github('JEFworks/MUDAN', \
-                  dependencies = FALSE, \
-                  force = TRUE); \
-              cat('MUDAN OK\n')"; \
+              tryCatch({ \
+                  remotes::install_github('JEFworks/MUDAN', \
+                      dependencies = FALSE, force = TRUE); \
+                  library(MUDAN); \
+                  cat('MUDAN', as.character(packageVersion('MUDAN')), 'OK\n') \
+              }, error = function(e) { \
+                  message('First attempt failed: ', conditionMessage(e)); \
+                  message('Retrying with dependencies...'); \
+                  remotes::install_github('JEFworks/MUDAN', \
+                      dependencies = NA, force = TRUE); \
+                  library(MUDAN); \
+                  cat('MUDAN', as.character(packageVersion('MUDAN')), 'OK (with deps)\n') \
+              })"; \
     fi
 
 # Install RidgeR from GitHub (beibeiru/RidgeR)
@@ -185,11 +232,19 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "Installing RidgeR from GitHub..." && \
         echo "========================================" && \
         R -e "options(timeout = 600); \
-              remotes::install_github('beibeiru/RidgeR', \
-                  dependencies = FALSE, \
-                  force = TRUE); \
-              library(RidgeR); \
-              cat('RidgeR version:', as.character(packageVersion('RidgeR')), '\n')"; \
+              tryCatch({ \
+                  remotes::install_github('beibeiru/RidgeR', \
+                      dependencies = FALSE, force = TRUE); \
+                  library(RidgeR); \
+                  cat('RidgeR', as.character(packageVersion('RidgeR')), 'OK\n') \
+              }, error = function(e) { \
+                  message('First attempt failed: ', conditionMessage(e)); \
+                  message('Retrying with dependencies...'); \
+                  remotes::install_github('beibeiru/RidgeR', \
+                      dependencies = NA, force = TRUE); \
+                  library(RidgeR); \
+                  cat('RidgeR', as.character(packageVersion('RidgeR')), 'OK (with deps)\n') \
+              })"; \
     fi
 
 # Install SecAct from GitHub (data2intelligence/SecAct)
@@ -199,11 +254,19 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "Installing SecAct from GitHub..." && \
         echo "========================================" && \
         R -e "options(timeout = 600); \
-              remotes::install_github('data2intelligence/SecAct', \
-                  dependencies = FALSE, \
-                  force = TRUE); \
-              library(SecAct); \
-              cat('SecAct version:', as.character(packageVersion('SecAct')), '\n')"; \
+              tryCatch({ \
+                  remotes::install_github('data2intelligence/SecAct', \
+                      dependencies = FALSE, force = TRUE); \
+                  library(SecAct); \
+                  cat('SecAct', as.character(packageVersion('SecAct')), 'OK\n') \
+              }, error = function(e) { \
+                  message('First attempt failed: ', conditionMessage(e)); \
+                  message('Retrying with dependencies...'); \
+                  remotes::install_github('data2intelligence/SecAct', \
+                      dependencies = NA, force = TRUE); \
+                  library(SecAct); \
+                  cat('SecAct', as.character(packageVersion('SecAct')), 'OK (with deps)\n') \
+              })"; \
     fi
 
 # Install SpaCET from GitHub (data2intelligence/SpaCET)
@@ -213,11 +276,19 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "Installing SpaCET from GitHub..." && \
         echo "========================================" && \
         R -e "options(timeout = 600); \
-              remotes::install_github('data2intelligence/SpaCET', \
-                  dependencies = FALSE, \
-                  force = TRUE); \
-              library(SpaCET); \
-              cat('SpaCET version:', as.character(packageVersion('SpaCET')), '\n')"; \
+              tryCatch({ \
+                  remotes::install_github('data2intelligence/SpaCET', \
+                      dependencies = FALSE, force = TRUE); \
+                  library(SpaCET); \
+                  cat('SpaCET', as.character(packageVersion('SpaCET')), 'OK\n') \
+              }, error = function(e) { \
+                  message('First attempt failed: ', conditionMessage(e)); \
+                  message('Retrying with dependencies...'); \
+                  remotes::install_github('data2intelligence/SpaCET', \
+                      dependencies = NA, force = TRUE); \
+                  library(SpaCET); \
+                  cat('SpaCET', as.character(packageVersion('SpaCET')), 'OK (with deps)\n') \
+              })"; \
     fi
 
 # Verify R installation (fail build if required packages are missing)
