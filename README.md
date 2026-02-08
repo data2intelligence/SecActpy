@@ -304,25 +304,86 @@ with h5py.File("results.h5ad", "r") as f:
     zscore = f['zscore'][:]           # NumPy array (proteins × cells)
 ```
 
+#### Sparse mode for memory-efficient processing
+
+By default, sparse Y matrices are converted to dense before matrix
+multiplication. For very large, highly sparse datasets (e.g., scRNA-seq with
+100k+ cells at <5% density), this can require hundreds of GB of RAM.
+
+Setting `sparse_mode=True` keeps Y sparse throughout the entire pipeline.
+Instead of densifying Y and computing `T @ Y_dense`, it uses the algebraic
+identity `(Y.T @ T.T).T` to perform the multiplication with Y in sparse format.
+Column z-scoring and row-mean centering are applied as lightweight corrections
+on the small output matrix, never on Y itself.
+
+All three high-level functions support `sparse_mode`:
+
+```python
+# scRNA-seq: sparse CPM → log2 → ridge, Y never densified
+result = secact_activity_inference_scrnaseq(
+    adata,
+    cell_type_col="cell_type",
+    is_single_cell_level=True,
+    batch_size=5000,
+    sparse_mode=True,   # keep Y sparse end-to-end
+    verbose=True
+)
+
+# Spatial transcriptomics: same sparse pipeline
+result = secact_activity_inference_st(
+    adata,
+    batch_size=5000,
+    sparse_mode=True,
+    verbose=True
+)
+```
+
+When `sparse_mode=True`, the scrnaseq and ST functions bypass the standard
+dense normalization pipeline. CPM normalization and log2 transform are applied
+directly on the sparse matrix (both are zero-preserving), and row-mean
+centering + column z-scoring are handled in-flight by `ridge_batch`.
+
+| | Default (`sparse_mode=False`) | `sparse_mode=True` |
+|---|---|---|
+| Memory | Allocates full dense Y | Y stays sparse |
+| Speed (<5% density) | Baseline | ~1.8x faster |
+| Speed (5-10% density) | Baseline | ~25% slower |
+| Results | Identical | Identical |
+
 #### Advanced: `ridge_batch` for full control
 
-The high-level `secact_activity_inference` handles gene subsetting, scaling,
-centering, and streaming output automatically. If you need more control — for
-example, to pass a sparse matrix directly or skip normalization — use the
-lower-level `ridge_batch` function.
+The high-level functions handle gene subsetting, scaling, centering, and
+streaming output automatically. If you need more control — for example, to
+pass a pre-processed sparse matrix directly — use the lower-level `ridge_batch`
+function.
 
-**Why dense and sparse inputs are handled differently.** `ridge_batch` processes
-Y in chunks and needs whole-column statistics (mean and standard deviation) for
-z-score normalization. How it gets those statistics depends on the input format:
+**How dense and sparse inputs are handled.** `ridge_batch` processes Y in
+chunks and needs whole-column statistics (mean, standard deviation) for z-score
+normalization. How it gets those statistics depends on the input format:
 
-- **Dense (NumPy array):** The function cannot compute whole-column statistics
-  because it only sees one chunk at a time, and the full array may be too large
-  to scan upfront. **You must z-score normalize Y yourself** before calling.
-- **Sparse (`scipy.sparse` matrix):** Computing column means and standard
-  deviations from a sparse matrix is cheap (no dense conversion needed), so the
-  function does this automatically upfront, then applies z-score normalization
-  on-the-fly within each batch. This is done because sparse matrices cannot be
-  z-scored in place without losing sparsity — the result would be fully dense.
+- **Dense (NumPy array):** You must z-score normalize Y yourself before calling,
+  since `ridge_batch` does not scan the full array upfront.
+- **Sparse (`scipy.sparse` matrix):** Column statistics are computed efficiently
+  from the sparse structure upfront (no dense conversion needed), then z-score
+  normalization is applied on-the-fly within each batch.
+
+With `sparse_mode=True`, the sparse matrix is never densified — the matrix
+multiplication uses `(Y.T @ T.T).T` and normalization corrections are applied
+to the small output. You can also enable `row_center=True` to apply row-mean
+centering in-flight (used internally by the scrnaseq/ST functions when data
+hasn't been pre-centered):
+
+```python
+from secactpy import ridge_batch
+
+# Sparse end-to-end: no densification, in-flight normalization
+result = ridge_batch(
+    X, Y_sparse,
+    batch_size=5000,
+    sparse_mode=True,    # keep Y sparse during T @ Y
+    row_center=True      # apply row-mean centering in-flight
+)
+```
 
 **If you do not want automatic sparse scaling**, convert to dense first and
 normalize however you like (or not at all):
@@ -369,6 +430,7 @@ All three inference functions support `batch_size`, `output_path`, and
 | `seed` | `0` | Random seed for reproducibility |
 | `backend` | `'auto'` | 'auto', 'numpy', or 'cupy' |
 | `use_cache` | `False` | Cache permutation tables to disk |
+| `sparse_mode` | `False` | Keep sparse Y in sparse format (avoids densification) |
 
 ### ST-Specific Parameters
 
@@ -537,6 +599,12 @@ If you use SecActPy in your research, please cite:
 MIT License - see [LICENSE](LICENSE) for details.
 
 ## Changelog
+
+### v0.2.2 (In Development)
+- `sparse_mode=True` for memory-efficient processing of sparse Y matrices
+- End-to-end sparse pipeline in scrnaseq/ST: sparse CPM, log2, and in-flight
+  row-mean centering + column z-scoring without densification
+- `row_center=True` in `ridge_batch()` for in-flight row-mean centering
 
 ### v0.2.1
 - Streaming output (`output_path`) support in all high-level inference functions

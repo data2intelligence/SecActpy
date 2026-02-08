@@ -5,6 +5,22 @@ All notable changes to SecActPy will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - Unreleased
+
+### Added
+- `sparse_mode=True` parameter in `ridge()`, `ridge_batch()`, and all
+  high-level inference functions for memory-efficient processing of sparse Y
+  matrices. Uses `(Y.T @ T.T).T` to compute `T @ Y` without densifying Y,
+  with column z-scoring applied as corrections on the small output matrix.
+- End-to-end sparse pipeline in `secact_activity_inference_scrnaseq()` and
+  `secact_activity_inference_st()`: when `sparse_mode=True`, CPM normalization
+  and log2 transform are applied directly on sparse matrices (both are
+  zero-preserving), bypassing the dense `secact_activity_inference()` path.
+- `row_center=True` parameter in `ridge_batch()` for in-flight row-mean
+  centering without densifying Y. Computes row-centered column statistics
+  from sparse Y analytically and applies `T @ row_means` correction per
+  permutation.
+
 ## [0.2.1] - 2026-02-08
 
 ### Added
