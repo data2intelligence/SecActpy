@@ -137,26 +137,54 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
         echo "Installing BiocManager and Bioconductor packages..." && \
         echo "========================================" && \
-        R -e "options(repos = c(CRAN = Sys.getenv('RSPM', 'https://cloud.r-project.org/'))); \
+        R -e "options(timeout = 600, repos = c(CRAN = Sys.getenv('RSPM', 'https://cloud.r-project.org/'))); \
               install.packages(c('remotes', 'BiocManager'), Ncpus = parallel::detectCores())" && \
-        R -e "BiocManager::install(ask = FALSE, update = FALSE)" && \
-        R -e "BiocManager::install(c( \
+        R -e "options(timeout = 600); BiocManager::install(ask = FALSE, update = FALSE)" && \
+        R -e "options(timeout = 600); \
+              bioc_pkgs <- c( \
                   'Biobase', 'S4Vectors', 'IRanges', \
                   'SummarizedExperiment', 'SingleCellExperiment', \
                   'rhdf5', 'ComplexHeatmap', 'limma', \
                   'UCell', 'BiRewire', \
                   'sva' \
-              ), ask = FALSE, update = FALSE, Ncpus = parallel::detectCores())"; \
+              ); \
+              BiocManager::install(bioc_pkgs, ask = FALSE, update = FALSE, \
+                  Ncpus = parallel::detectCores()); \
+              missing <- bioc_pkgs[!sapply(bioc_pkgs, requireNamespace, quietly = TRUE)]; \
+              if (length(missing) > 0) { \
+                  cat('WARNING: Bioconductor packages failed on first attempt:', \
+                      paste(missing, collapse=', '), '\n'); \
+                  cat('Retrying individually...\n'); \
+                  for (pkg in missing) { \
+                      tryCatch( \
+                          BiocManager::install(pkg, ask = FALSE, update = FALSE, \
+                              Ncpus = parallel::detectCores()), \
+                          error = function(e) cat('  ERROR installing', pkg, ':', \
+                              conditionMessage(e), '\n') \
+                      ) \
+                  } \
+              }; \
+              still_missing <- bioc_pkgs[!sapply(bioc_pkgs, requireNamespace, quietly = TRUE)]; \
+              if (length(still_missing) > 0) { \
+                  cat('WARNING: Could not install Bioconductor packages:', \
+                      paste(still_missing, collapse=', '), '\n'); \
+                  cat('Build will continue; verification step will handle fallback.\n') \
+              } else { \
+                  cat('All', length(bioc_pkgs), 'Bioconductor packages installed OK\n') \
+              }"; \
     fi
 
-# Install all CRAN dependencies in one step (pre-compiled binaries)
+# Install all CRAN dependencies (pre-compiled binaries from RSPM)
 # NMF depends on Biobase (Bioconductor), so Bioconductor must be installed first
+# Use dependencies = NA (Depends + Imports + LinkingTo only, not Suggests)
+# to avoid pulling hundreds of optional packages that waste disk space
 ARG INSTALL_R
 RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
         echo "Installing CRAN packages (binary)..." && \
         echo "========================================" && \
-        R -e "options(repos = c(CRAN = Sys.getenv('RSPM', 'https://cloud.r-project.org/'))); \
+        R -e "options(timeout = 600, \
+                  repos = c(CRAN = Sys.getenv('RSPM', 'https://cloud.r-project.org/'))); \
               install.packages(c( \
                   'devtools', \
                   'Matrix', 'Rcpp', 'RcppArmadillo', 'RcppEigen', 'RcppParallel', \
@@ -168,9 +196,33 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
                   'car', 'lme4', 'sp', \
                   'scatterpie', 'png', 'shiny', 'plotly', 'DT', \
                   'factoextra', 'NbClust', 'cluster', 'pbmcapply', \
-                  'psych', 'arrow', 'RANN', 'sctransform', \
+                  'psych', 'RANN', 'sctransform', \
                   'irlba', 'igraph', 'Rtsne', 'ROCR', 'entropy' \
-              ), dependencies = TRUE, Ncpus = parallel::detectCores())"; \
+              ), dependencies = NA, Ncpus = parallel::detectCores())"; \
+    fi
+
+# Install arrow separately (large package with C++ library download)
+ARG INSTALL_R
+RUN if [ "$INSTALL_R" = "true" ]; then \
+        echo "========================================" && \
+        echo "Installing arrow package..." && \
+        echo "========================================" && \
+        R -e "options(timeout = 600, \
+                  repos = c(CRAN = Sys.getenv('RSPM', 'https://cloud.r-project.org/'))); \
+              tryCatch({ \
+                  install.packages('arrow', dependencies = NA, \
+                      Ncpus = parallel::detectCores()); \
+                  library(arrow); \
+                  cat('arrow', as.character(packageVersion('arrow')), 'OK\n') \
+              }, error = function(e) { \
+                  cat('WARNING: arrow install failed:', conditionMessage(e), '\n'); \
+                  cat('Retrying with LIBARROW_BINARY=TRUE...\n'); \
+                  Sys.setenv(LIBARROW_BINARY = 'TRUE', NOT_CRAN = 'TRUE'); \
+                  install.packages('arrow', dependencies = NA, \
+                      Ncpus = parallel::detectCores()); \
+                  library(arrow); \
+                  cat('arrow', as.character(packageVersion('arrow')), 'OK (retry)\n') \
+              })"; \
     fi
 
 # Verify all pre-installed R dependencies are present
@@ -190,21 +242,43 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
                   'arrow', 'RANN', 'sctransform', 'UCell', 'BiRewire', 'limma', \
                   'sva', 'irlba', 'igraph', 'Rtsne', 'ROCR', 'entropy' \
               ); \
-              missing <- required[!sapply(required, requireNamespace, quietly = TRUE)]; \
+              cat('Checking', length(required), 'required packages...\n'); \
+              status <- sapply(required, requireNamespace, quietly = TRUE); \
+              for (i in seq_along(required)) { \
+                  cat(sprintf('  %-20s %s\n', required[i], \
+                      if (status[i]) 'OK' else 'MISSING')) \
+              }; \
+              missing <- required[!status]; \
               if (length(missing) > 0) { \
-                  cat('WARNING:', length(missing), 'packages missing after initial install:\n'); \
-                  for (pkg in missing) cat('  -', pkg, '\n'); \
-                  cat('Attempting fallback install via BiocManager with RSPM...\n'); \
-                  options(repos = c(CRAN = Sys.getenv('RSPM', 'https://cloud.r-project.org/'))); \
-                  BiocManager::install(missing, ask = FALSE, update = FALSE, \
-                      Ncpus = parallel::detectCores()); \
+                  cat('\nWARNING:', length(missing), 'packages missing after initial install:\n'); \
+                  cat('  ', paste(missing, collapse=', '), '\n'); \
+                  cat('Attempting fallback install via BiocManager...\n'); \
+                  options(timeout = 600, \
+                      repos = c(CRAN = Sys.getenv('RSPM', 'https://cloud.r-project.org/'))); \
+                  for (pkg in missing) { \
+                      cat('  Installing', pkg, '...\n'); \
+                      tryCatch( \
+                          BiocManager::install(pkg, ask = FALSE, update = FALSE, \
+                              Ncpus = parallel::detectCores()), \
+                          error = function(e) cat('    FAILED:', conditionMessage(e), '\n') \
+                      ) \
+                  } \
               }; \
               still_missing <- required[!sapply(required, requireNamespace, quietly = TRUE)]; \
               if (length(still_missing) > 0) { \
+                  cat('\n========================================\n'); \
+                  cat('FATAL: Cannot install required packages:\n'); \
+                  for (pkg in still_missing) cat('  -', pkg, '\n'); \
+                  cat('========================================\n'); \
+                  cat('System info: R', R.version.string, '\n'); \
+                  cat('BiocManager version:', as.character(packageVersion('BiocManager')), '\n'); \
+                  tryCatch(cat('Bioconductor version:', \
+                      as.character(BiocManager::version()), '\n'), \
+                      error = function(e) NULL); \
                   stop(paste('FATAL: Cannot install required packages:', \
                       paste(still_missing, collapse=', '))) \
               } else { \
-                  cat('All', length(required), 'required R packages verified OK\n') \
+                  cat('\nAll', length(required), 'required R packages verified OK\n') \
               }"; \
     fi
 
