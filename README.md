@@ -192,38 +192,96 @@ activity = result['zscore']  # (proteins × cell_types)
 
 ### Large-Scale Batch Processing
 
+**What is batch processing?** By default, `secact_activity_inference` loads the
+entire expression matrix into memory and runs ridge regression on all samples at
+once. For large datasets (e.g., 50,000+ single cells), this can exceed available
+RAM or GPU memory. Batch processing solves this: the expensive projection matrix
+`T = (X'X + λI)^{-1} X'` is computed once, then samples are processed in
+chunks of `batch_size` at a time. Each chunk produces partial results that are
+concatenated at the end. The final output is identical — only peak memory usage
+is reduced.
+
+**How `secact_activity_inference` works:**
+
+- **Input format:** Accepts a dense pandas DataFrame (or a file path). Sparse
+  matrices are not supported — convert to a DataFrame first. The function
+  handles all gene subsetting and z-score normalization internally, so you do
+  not need to pre-process the data.
+- **Batch size:** `batch_size=None` by default, meaning all samples are processed
+  at once. Set `batch_size=5000` (or similar) to process in memory-bounded
+  chunks when working with large datasets.
+- **Streaming output:** Set `output_path="results.h5ad"` to write results
+  directly to disk as each batch completes, instead of accumulating them in
+  memory. The function returns `None` in this mode. This is useful when even
+  the output matrices are too large for memory. Requires `batch_size`.
+
+Internally, the function:
+1. Finds overlapping genes between expression and signature matrices
+2. Subsets both matrices to common genes
+3. Z-score normalizes each column (mean=0, std=1)
+4. Runs ridge regression (all at once, or in batches if `batch_size` is set)
+
 ```python
-from secactpy import ridge_batch
+from secactpy import secact_activity_inference
 
-# Dense data (pre-scaled)
-Y_scaled = (Y - Y.mean(axis=0)) / Y.std(axis=0, ddof=1)
-result = ridge_batch(
-    X, Y_scaled,
-    batch_size=5000,
-    n_rand=1000,
-    backend='cupy',  # Use GPU
+# Load multi-sample expression data
+# Download: https://zenodo.org/records/18520356/files/OV_scRNAseq_CD4.h5ad
+import anndata as ad
+adata = ad.read_h5ad("OV_scRNAseq_CD4.h5ad")
+
+# Process all cells with batch processing (results in memory)
+result = secact_activity_inference(
+    adata.to_df().T,         # genes × cells DataFrame
+    is_differential=False,   # center by row means across samples
+    batch_size=5000,         # process 5000 cells per batch
+    backend='cupy',          # GPU acceleration (or 'numpy' for CPU)
     verbose=True
 )
 
-# Sparse data (auto-scaled internally)
-import scipy.sparse as sp
-Y_sparse = sp.csr_matrix(counts)  # Raw counts
-result = ridge_batch(
-    X, Y_sparse,
-    batch_size=10000,
-    n_rand=1000,
-    backend='auto',
-    verbose=True
-)
+# result['zscore'] is (proteins × samples)
+print(result['zscore'].head())
 
 # Stream results to disk for very large datasets
-ridge_batch(
-    X, Y,
-    batch_size=10000,
-    output_path="results.h5ad",
-    output_compression="gzip",
+secact_activity_inference(
+    adata.to_df().T,
+    is_differential=False,
+    batch_size=5000,
+    output_path="results.h5ad",       # write here instead of returning
+    output_compression="gzip",        # compress on disk (default)
+    backend='cupy',
     verbose=True
 )
+# Returns None — load results back when needed:
+import h5py
+with h5py.File("results.h5ad", "r") as f:
+    zscore = f['zscore'][:]
+```
+
+#### Advanced: `ridge_batch` for full control
+
+The high-level `secact_activity_inference` handles gene subsetting, scaling,
+centering, and streaming output automatically. If you need more control — for
+example, to pass a sparse matrix directly or skip centering — use the
+lower-level `ridge_batch` function.
+
+**Dense vs sparse input.** `ridge_batch` accepts two input formats:
+- **Dense (NumPy array):** You must z-score normalize Y yourself before calling,
+  because the function processes Y in chunks and cannot compute whole-column
+  statistics internally.
+- **Sparse (`scipy.sparse` matrix):** Pass raw counts directly. The function
+  computes column means and standard deviations from the full sparse matrix
+  up front, then applies z-score normalization on-the-fly within each batch
+  (without converting the entire matrix to dense). This is necessary because
+  sparse matrices cannot be z-scored in place without losing sparsity.
+
+If you do not want the automatic sparse scaling, convert to dense first and
+normalize however you like:
+
+```python
+# Opt out of auto-scaling: convert sparse to dense, apply your own processing
+Y_dense = Y_sparse.toarray().astype(np.float64)
+# ... apply your own normalization ...
+result = ridge_batch(X, Y_dense, batch_size=5000)
 ```
 
 ## API Reference

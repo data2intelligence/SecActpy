@@ -856,9 +856,11 @@ def secact_activity_inference(
     use_gsl_rng: bool = True,
     use_cache: bool = False,
     batch_size: Optional[int] = None,
+    output_path: Optional[str] = None,
+    output_compression: Optional[str] = "gzip",
     sort_genes: bool = False,
     verbose: bool = True
-) -> dict[str, pd.DataFrame]:
+) -> Optional[dict[str, pd.DataFrame]]:
     """
     Secreted Protein Activity Inference (matching R's SecAct.activity.inference).
 
@@ -918,6 +920,14 @@ def secact_activity_inference(
     use_cache : bool, default=False
         Cache permutation tables to disk for reuse. Enable when running
         multiple analyses with the same gene count for faster repeated runs.
+    output_path : str, optional
+        Path to an HDF5 file for streaming results to disk. When set,
+        each batch's results are written directly to this file as they
+        complete, and the function returns ``None`` instead of a dict.
+        Requires ``batch_size`` to be set.
+    output_compression : str, optional, default="gzip"
+        Compression for the HDF5 output file. One of "gzip", "lzf",
+        or None. Only used when ``output_path`` is set.
     sort_genes : bool, default=False
         If True, sort common genes alphabetically before running ridge regression.
         This ensures reproducible results across different platforms but may
@@ -928,12 +938,22 @@ def secact_activity_inference(
 
     Returns
     -------
-    dict
-        Results dictionary containing:
+    dict or None
+        If ``output_path`` is None (default), returns a results dictionary
+        containing:
+
         - beta : DataFrame (proteins × samples) - Regression coefficients
         - se : DataFrame (proteins × samples) - Standard errors
         - zscore : DataFrame (proteins × samples) - Z-scores
         - pvalue : DataFrame (proteins × samples) - P-values
+
+        If ``output_path`` is set, results are streamed to the file and
+        the function returns ``None``.
+
+    Raises
+    ------
+    ValueError
+        If ``output_path`` is set without ``batch_size``.
 
     Examples
     --------
@@ -951,6 +971,14 @@ def secact_activity_inference(
 
     >>> # Access results
     >>> print(result['zscore'].head())
+
+    >>> # Stream results to disk for large datasets
+    >>> secact_activity_inference(
+    ...     large_expression_df,
+    ...     batch_size=5000,
+    ...     output_path="results.h5ad",
+    ...     verbose=True
+    ... )
     """
     from .signature import load_signature
 
@@ -972,6 +1000,13 @@ def secact_activity_inference(
     # Ensure input_profile is a DataFrame
     if not isinstance(input_profile, pd.DataFrame):
         raise ValueError("input_profile must be a DataFrame or path to expression file")
+
+    # Validate streaming output requirements
+    if output_path is not None and batch_size is None:
+        raise ValueError(
+            "output_path requires batch_size. "
+            "Set batch_size (e.g., batch_size=5000) to enable streaming output."
+        )
 
     # --- Step 1: Load signature matrix ---
     if isinstance(sig_matrix, pd.DataFrame):
@@ -1086,6 +1121,10 @@ def secact_activity_inference(
             backend=backend,
             use_gsl_rng=use_gsl_rng,
             use_cache=use_cache,
+            output_path=output_path,
+            output_compression=output_compression,
+            feature_names=X_scaled.columns.tolist(),
+            sample_names=Y_scaled.columns.tolist(),
             verbose=False
         )
     else:
@@ -1101,7 +1140,14 @@ def secact_activity_inference(
             verbose=False
         )
 
-    # --- Step 10: Create DataFrames with proper labels ---
+    # --- Step 10: Handle streaming output ---
+    if result is None:
+        # Streaming mode: results written to output_path by ridge_batch
+        if verbose:
+            print(f"  Results streamed to {output_path}")
+        return None
+
+    # --- Step 11: Create DataFrames with proper labels ---
     feature_names = X_scaled.columns.tolist()
     sample_names = Y_scaled.columns.tolist()
 
@@ -1110,7 +1156,7 @@ def secact_activity_inference(
     zscore_df = pd.DataFrame(result['zscore'], index=feature_names, columns=sample_names)
     pvalue_df = pd.DataFrame(result['pvalue'], index=feature_names, columns=sample_names)
 
-    # --- Step 11: Expand grouped signatures back to individual rows ---
+    # --- Step 12: Expand grouped signatures back to individual rows ---
     if is_group_sig:
         if verbose:
             print("  Expanding grouped signatures...")
