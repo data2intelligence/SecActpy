@@ -528,6 +528,12 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Changelog
 
+### v0.2.1
+- Streaming output (`output_path`) support in all high-level inference functions
+- `use_gsl_rng` support in `ridge_batch()` for ~70x faster permutation generation
+- Fixed `use_gsl_rng` being silently ignored in batch processing
+- Expanded batch processing documentation with examples and downloadable data
+
 ### v0.2.0 (Official Release)
 - Official release under data2intelligence organization
 - PyPI package available (`pip install secactpy`)

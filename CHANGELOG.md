@@ -5,6 +5,25 @@ All notable changes to SecActPy will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-02-08
+
+### Added
+- Streaming output (`output_path`, `output_compression`) in all high-level
+  inference functions: `secact_activity_inference()`,
+  `secact_activity_inference_scrnaseq()`, and `secact_activity_inference_st()`
+- `use_gsl_rng` parameter in `ridge_batch()` — enables the ~70x faster NumPy
+  RNG path for batch processing (previously hardcoded to GSL RNG)
+
+### Fixed
+- `use_gsl_rng` was accepted by `secact_activity_inference` but silently
+  ignored by `ridge_batch`, which always used the slower GSL RNG. Now
+  `ridge_batch` (both dense and sparse paths) respects the flag.
+
+### Changed
+- Expanded README batch processing documentation: explains what batch
+  processing is, in-memory vs streaming modes, dense vs sparse handling,
+  and includes downloadable example data
+
 ## [0.2.0] - 2025-01-06
 
 ### Changed
@@ -55,5 +74,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - GSL-compatible random number generator
   - Cross-platform support (Linux, macOS, Windows)
 
+[0.2.1]: https://github.com/data2intelligence/SecActPy/releases/tag/v0.2.1
 [0.2.0]: https://github.com/data2intelligence/SecActPy/releases/tag/v0.2.0
 [0.1.2]: https://github.com/data2intelligence/SecActPy/releases/tag/v0.1.2
