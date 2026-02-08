@@ -32,7 +32,15 @@ Python implementation of [SecAct](https://github.com/data2intelligence/SecAct) f
 ### From PyPI (Recommended)
 
 ```bash
+# CPU Only
 pip install secactpy
+
+# With GPU Support (CUDA 11.x)
+pip install "secactpy[gpu]"
+
+# With GPU Support (CUDA 12.x)
+pip install secactpy
+pip install cupy-cuda12x
 ```
 
 ### From GitHub
@@ -43,9 +51,17 @@ pip install git+https://github.com/data2intelligence/SecActpy.git
 
 # With GPU Support (CUDA 11.x)
 pip install "secactpy[gpu] @ git+https://github.com/data2intelligence/SecActpy.git"
+
+# With GPU Support (CUDA 12.x)
+pip install git+https://github.com/data2intelligence/SecActpy.git
+pip install cupy-cuda12x
 ```
 
-> **Note**: For CUDA 12.x, install CuPy separately: `pip install cupy-cuda12x`
+> **Important (CUDA 12.x users)**: Do **not** use the `[gpu]` extra on CUDA 12.x systems — it installs `cupy-cuda11x`, which conflicts with `cupy-cuda12x`. If you already installed with `[gpu]`, remove the conflicting package first:
+> ```bash
+> pip uninstall cupy-cuda11x
+> pip install cupy-cuda12x
+> ```
 
 ### Development Installation
 
