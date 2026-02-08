@@ -23,16 +23,16 @@ docker pull psychemistz/secactpy:gpu-with-r
 ### Build Images Locally
 
 ```bash
-# CPU version (default, Python only - fast build ~5 min)
+# CPU version (default, Python only ~5 min)
 docker build -t secactpy:latest .
 
 # GPU version (Python + CuPy ~10 min)
 docker build -t secactpy:gpu --build-arg USE_GPU=true .
 
-# CPU + R version (Python + R packages ~20-30 min)
+# CPU + R version (Python + R packages ~30-60 min)
 docker build -t secactpy:with-r --build-arg INSTALL_R=true .
 
-# GPU + R version (full stack ~30-40 min)
+# GPU + R version (full stack ~40-90 min)
 docker build -t secactpy:gpu-with-r --build-arg USE_GPU=true --build-arg INSTALL_R=true .
 ```
 
@@ -54,22 +54,35 @@ docker build -t secactpy:gpu-with-r --build-arg USE_GPU=true --build-arg INSTALL
 
 ## R Packages Included
 
-When building with `INSTALL_R=true`, the following packages are installed:
+When building with `INSTALL_R=true`, the following packages are installed. CRAN packages are fetched as pre-compiled binaries from the [Posit Public Package Manager](https://packagemanager.posit.co/) for faster builds.
 
-### From CRAN (`install.packages()`)
+### From CRAN (pre-compiled binaries)
+
+**Core:**
 - remotes, BiocManager, devtools
-- Matrix, ggplot2, dplyr, tidyr, data.table
-- Rcpp, RcppArmadillo, RcppEigen
+- Matrix, Rcpp, RcppArmadillo, RcppEigen
+- ggplot2, dplyr, tidyr, data.table, httr, jsonlite, R6, crayon
+
+**SecAct dependencies:**
+- reshape2, patchwork, NMF, akima, gganimate, metap
+- circlize, ggalluvial, networkD3, survival, survminer
+- ggpubr, car, lme4, sp
+
+**SpaCET dependencies:**
+- scatterpie, png, shiny, plotly, DT
+- factoextra, NbClust, cluster, pbmcapply, psych
+- arrow, RANN, sctransform
 
 ### From Bioconductor (`BiocManager::install()`)
 - Biobase, S4Vectors, IRanges
-- GenomicRanges, SummarizedExperiment
-- SingleCellExperiment
+- SummarizedExperiment, SingleCellExperiment, rhdf5
+- ComplexHeatmap, limma, UCell, BiRewire
 
 ### From GitHub (`remotes::install_github()`)
-- **SecAct**: `data2intelligence/SecAct`
-- **RidgeR**: `beibeiru/RidgeR`
-- **SpaCET**: `data2intelligence/SpaCET`
+- **RidgeR**: `beibeiru/RidgeR` — Ridge regression with GSL RNG
+- **SecAct**: `data2intelligence/SecAct` — Secreted protein activity inference
+- **SpaCET**: `data2intelligence/SpaCET` — Spatial transcriptomics cell type analysis
+- **MUDAN**: `JEFworks/MUDAN` — Multi-scale Diffusion for Uniform Manifold Approximation (SpaCET dependency)
 
 ## Running Containers
 
@@ -324,6 +337,32 @@ docker run -it --rm \
   -v /path/to/results:/results \
   psychemistz/secactpy:latest
 ```
+
+## Singularity / HPC
+
+On HPC clusters where Docker is not available, use Singularity or Apptainer to pull the Docker images:
+
+```bash
+# Load Singularity or Apptainer (cluster-specific)
+module load singularity   # or: module load apptainer
+
+# Pull CPU image
+singularity pull docker://psychemistz/secactpy:latest
+
+# Pull R-enabled image
+singularity pull docker://psychemistz/secactpy:with-r
+
+# Run interactively
+singularity exec secactpy_latest.sif python3 -c "import secactpy; print(secactpy.__version__)"
+
+# Run with data binding
+singularity exec --bind /path/to/data:/data secactpy_latest.sif python3 your_script.py
+
+# Run R inside the container
+singularity exec secactpy_with-r.sif Rscript -e "library(SecAct); library(RidgeR); cat('OK\n')"
+```
+
+> **Note:** Building images from the Dockerfile on HPC requires `fakeroot` support. If unavailable, pull the pre-built images from Docker Hub instead.
 
 ## CI/CD Notes
 
