@@ -1202,9 +1202,11 @@ def secact_activity_inference_scrnaseq(
     use_gsl_rng: bool = True,
     use_cache: bool = False,
     batch_size: Optional[int] = None,
+    output_path: Optional[str] = None,
+    output_compression: Optional[str] = "gzip",
     sort_genes: bool = False,
     verbose: bool = False
-) -> dict[str, Any]:
+) -> Optional[dict[str, Any]]:
     """
     Cell State Activity Inference from Single Cell RNA-seq Data.
 
@@ -1243,6 +1245,12 @@ def secact_activity_inference_scrnaseq(
         Set to False for faster inference when R matching is not needed.
     use_cache : bool, default=False
         Cache permutation tables to disk for reuse.
+    output_path : str, optional
+        Path to an HDF5 file for streaming results to disk. When set,
+        results are written as each batch completes and the function
+        returns ``None``. Requires ``batch_size``.
+    output_compression : str, optional, default="gzip"
+        Compression for the HDF5 output file ("gzip", "lzf", or None).
     sort_genes : bool, default=False
         If True, sort common genes alphabetically before running ridge regression.
         This ensures reproducible results across different platforms.
@@ -1251,12 +1259,15 @@ def secact_activity_inference_scrnaseq(
 
     Returns
     -------
-    dict
-        Dictionary with:
+    dict or None
+        If ``output_path`` is None, returns a dictionary with:
+
         - 'beta': DataFrame of coefficients (proteins × cell_types/cells)
         - 'se': DataFrame of standard errors
         - 'zscore': DataFrame of z-scores
         - 'pvalue': DataFrame of p-values
+
+        If ``output_path`` is set, returns ``None``.
 
     Examples
     --------
@@ -1501,6 +1512,8 @@ def secact_activity_inference_scrnaseq(
         use_gsl_rng=use_gsl_rng,
         use_cache=use_cache,
         batch_size=batch_size,
+        output_path=output_path,
+        output_compression=output_compression,
         sort_genes=sort_genes,
         verbose=verbose
     )
@@ -1693,9 +1706,11 @@ def secact_activity_inference_st(
     use_gsl_rng: bool = True,
     use_cache: bool = False,
     batch_size: Optional[int] = None,
+    output_path: Optional[str] = None,
+    output_compression: Optional[str] = "gzip",
     sort_genes: bool = False,
     verbose: bool = False
-) -> dict[str, Any]:
+) -> Optional[dict[str, Any]]:
     """
     Spot Activity Inference from Spatial Transcriptomics Data.
 
@@ -1743,6 +1758,12 @@ def secact_activity_inference_st(
         Set to False for faster inference when R matching is not needed.
     use_cache : bool, default=False
         Cache permutation tables to disk for reuse.
+    output_path : str, optional
+        Path to an HDF5 file for streaming results to disk. When set,
+        results are written as each batch completes and the function
+        returns ``None``. Requires ``batch_size``.
+    output_compression : str, optional, default="gzip"
+        Compression for the HDF5 output file ("gzip", "lzf", or None).
     sort_genes : bool, default=False
         If True, sort common genes alphabetically before running ridge regression.
         This ensures reproducible results across different platforms.
@@ -1751,12 +1772,15 @@ def secact_activity_inference_st(
 
     Returns
     -------
-    dict
-        Dictionary with:
+    dict or None
+        If ``output_path`` is None, returns a dictionary with:
+
         - 'beta': DataFrame of coefficients (proteins × spots or proteins × cell_types)
         - 'se': DataFrame of standard errors
         - 'zscore': DataFrame of z-scores
         - 'pvalue': DataFrame of p-values
+
+        If ``output_path`` is set, returns ``None``.
 
     Examples
     --------
@@ -2030,6 +2054,8 @@ def secact_activity_inference_st(
         use_gsl_rng=use_gsl_rng,
         use_cache=use_cache,
         batch_size=batch_size,
+        output_path=output_path,
+        output_compression=output_compression,
         sort_genes=sort_genes,
         verbose=verbose
     )
