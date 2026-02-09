@@ -68,7 +68,7 @@ docs = [
 
 [project.urls]
 Homepage = "https://github.com/data2intelligence/SecActpy"
-Documentation = "https://data2intelligence.github.io/SecActpy/"
+Documentation = "https://secactpy.readthedocs.io/"
 Repository = "https://github.com/data2intelligence/SecActpy"
 Issues = "https://github.com/data2intelligence/SecActpy/issues"
 "Original R Package" = "https://github.com/data2intelligence/SecAct"

@@ -1,5 +1,5 @@
 site_name: SecActPy
-site_url: https://data2intelligence.github.io/SecActpy/
+site_url: https://secactpy.readthedocs.io/
 site_description: Secreted protein activity inference from gene expression
 site_author: Seongyong Park
 repo_url: https://github.com/data2intelligence/SecActpy
