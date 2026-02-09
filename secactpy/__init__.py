@@ -94,7 +94,7 @@ For large datasets (>100k samples):
     >>> adata = results_to_anndata(results)  # For scanpy integration
 """
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 # Batch processing for large datasets
 from .batch import (

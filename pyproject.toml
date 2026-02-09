@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "secactpy"
-version = "0.2.2"
+version = "0.2.3"
 description = "Secreted Protein Activity Inference using Ridge Regression"
 readme = "README.md"
 license = {text = "MIT"}
