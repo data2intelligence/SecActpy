@@ -977,11 +977,11 @@ def _save_with_anndata(
     if verbose:
         size_mb = path.stat().st_size / (1024 * 1024)
         print(f"  File size: {size_mb:.2f} MB")
-        print(f"\nPython usage:")
-        print(f"  import anndata")
+        print("\nPython usage:")
+        print("  import anndata")
         print(f"  adata = anndata.read_h5ad('{path.name}')")
         print(f"  beta = adata.X  # ({n_samples} × {n_features})")
-        print(f"  zscore = adata.obsm['zscore']")
+        print("  zscore = adata.obsm['zscore']")
 
 
 def _save_with_h5py(
@@ -1049,9 +1049,9 @@ def _save_with_h5py(
     if verbose:
         size_mb = path.stat().st_size / (1024 * 1024)
         print(f"  File size: {size_mb:.2f} MB")
-        print(f"  (Note: h5py fallback used. For full compatibility, install anndata)")
-        print(f"\nPython usage:")
-        print(f"  import anndata")
+        print("  (Note: h5py fallback used. For full compatibility, install anndata)")
+        print("\nPython usage:")
+        print("  import anndata")
         print(f"  adata = anndata.read_h5ad('{path.name}')")
         print(f"  beta = adata.X  # ({n_samples} × {n_features})")
         print(f"  zscore = adata.obsm['zscore']")

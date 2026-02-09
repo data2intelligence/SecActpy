@@ -1402,9 +1402,6 @@ def secact_activity_inference_scrnaseq(
     # AnnData stores as (cells × genes), we need (genes × cells) like R
     # Prefer raw counts if available
     
-    # Determine which data layer to use
-    use_layer = None
-    
     if adata.raw is not None:
         counts_raw = adata.raw.X
         gene_names = list(adata.raw.var_names)
@@ -1431,8 +1428,8 @@ def secact_activity_inference_scrnaseq(
             print(f"  Using adata.X: {counts_raw.shape} (cells × genes)")
             if is_likely_normalized:
                 print(f"  WARNING: Data appears to be already normalized (max={max_val:.2f})")
-                print(f"           For accurate results, provide raw counts in adata.raw")
-                print(f"           Attempting to proceed with normalized data...")
+                print("           For accurate results, provide raw counts in adata.raw")
+                print("           Attempting to proceed with normalized data...")
 
     # Transpose to (genes × cells) to match R convention
     if sparse.issparse(counts_raw):

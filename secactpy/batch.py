@@ -41,7 +41,6 @@ import gc
 import math
 
 from .rng import (
-    CStdlibRNG,
     generate_inverse_permutation_table_fast,
     get_cached_inverse_perm_table,
 )
