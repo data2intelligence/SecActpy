@@ -11,7 +11,7 @@
 Python implementation of [SecAct](https://github.com/data2intelligence/SecAct) for inferring secreted protein activities from gene expression data.
 
 **Key Features:**
-- 🎯 **SecAct Compatible**: Produces identical results to the R SecAct/RidgeR package
+- 🎯 **SecAct Compatible**: Matches R SecAct/RidgeR results on the same platform (`rng_method='srand'`)
 - 🚀 **GPU Acceleration**: Optional CuPy backend for large-scale analysis
 - 📊 **Million-Sample Scale**: Batch processing with streaming output for massive datasets
 - 🔬 **Built-in Signatures**: Includes SecAct and CytoSig signature matrices
@@ -428,6 +428,8 @@ All three inference functions support `batch_size`, `output_path`, and
 | `lambda_` | `5e5` | Ridge regularization parameter |
 | `n_rand` | `1000` | Number of permutations |
 | `seed` | `0` | Random seed for reproducibility |
+| `rng_method` | `None` | RNG backend: `'srand'` (match R), `'gsl'` (cross-platform), `'numpy'` (fast) |
+| `is_group_sig` | `True` | Group similar signatures by correlation before regression |
 | `backend` | `'auto'` | 'auto', 'numpy', or 'cupy' |
 | `use_cache` | `False` | Cache permutation tables to disk |
 | `sparse_mode` | `False` | Keep sparse Y in sparse format (avoids densification) |
@@ -544,7 +546,21 @@ See [DOCKER.md](DOCKER.md) for detailed usage instructions.
 
 ## Reproducibility
 
-SecActPy produces **identical results** to R SecAct/RidgeR:
+SecActPy supports three RNG backends via the `rng_method` parameter, each
+offering different trade-offs between R compatibility and performance:
+
+| `rng_method` | Description | Use case |
+|---|---|---|
+| `'srand'` | C stdlib `srand()`/`rand()` via ctypes | Match R SecAct/RidgeR results **on the same platform** |
+| `'gsl'` | Mersenne Twister (GSL-compatible) | **Cross-platform** reproducibility within SecActPy |
+| `'numpy'` | Native NumPy RNG (~70x faster) | Fast analysis when reproducibility with R is not needed |
+
+### Matching R SecAct/RidgeR output
+
+To reproduce R SecAct/RidgeR results on the same machine, use `rng_method='srand'`.
+This uses the C standard library's `rand()` function, which matches R's internal
+RNG on the same platform. Note that C `rand()` implementations differ across
+operating systems, so results are platform-dependent.
 
 ```python
 result = secact_activity_inference(
@@ -554,16 +570,32 @@ result = secact_activity_inference(
     lambda_=5e5,
     n_rand=1000,
     seed=0,
-    use_gsl_rng=True  # Default: R-compatible RNG
+    rng_method="srand",  # Match R SecAct on same platform
 )
 ```
 
-For faster analysis (when R compatibility is not required):
+### Cross-platform reproducibility (default)
+
+The default RNG (`rng_method='gsl'`) uses a portable Mersenne Twister
+implementation that produces identical results across all platforms (Linux,
+macOS, Windows). This does **not** match R output, but guarantees consistent
+SecActPy results everywhere.
 
 ```python
 result = secact_activity_inference(
     expression,
-    use_gsl_rng=False,  # ~70x faster permutation generation
+    rng_method="gsl",  # Cross-platform reproducible (default)
+)
+```
+
+### Fastest analysis
+
+For maximum throughput when reproducibility is not required:
+
+```python
+result = secact_activity_inference(
+    expression,
+    rng_method="numpy",  # ~70x faster permutation generation
 )
 ```
 
@@ -599,6 +631,11 @@ If you use SecActPy in your research, please cite:
 MIT License - see [LICENSE](LICENSE) for details.
 
 ## Changelog
+
+### v0.2.3
+- `rng_method` parameter for explicit RNG selection: `'srand'` (match R SecAct), `'gsl'` (cross-platform), `'numpy'` (fast)
+- `is_group_sig=True` by default: groups correlated signatures to reduce redundancy
+- Updated SecAct signature matrix with consolidated signatures
 
 ### v0.2.2
 - **Fix**: `ImportError` when using `batch_size` with `secact_activity_inference()` or `secact_activity_inference_st()`
