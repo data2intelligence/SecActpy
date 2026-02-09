@@ -41,11 +41,11 @@ import gc
 import math
 
 from .rng import (
-    GSLRNG,
+    CStdlibRNG,
     generate_inverse_permutation_table_fast,
     get_cached_inverse_perm_table,
 )
-from .ridge import CUPY_AVAILABLE, EPS, DEFAULT_LAMBDA, DEFAULT_NRAND, DEFAULT_SEED
+from .ridge import CUPY_AVAILABLE, EPS, DEFAULT_LAMBDA, DEFAULT_NRAND, DEFAULT_SEED, _get_rng
 
 # Try to import h5py for streaming output
 try:
@@ -755,6 +755,7 @@ def _ridge_batch_sparse_path(
     batch_size: int,
     backend: str,
     use_gsl_rng: bool,
+    rng_method: str,
     use_cache: bool,
     output_path: Optional[str],
     output_compression: Optional[str],
@@ -831,12 +832,12 @@ def _ridge_batch_sparse_path(
     if verbose:
         print("  Loading inverse permutation table...")
 
-    if use_gsl_rng:
+    rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
+    if use_deterministic:
         if use_cache:
             inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
         else:
-            rng = GSLRNG(seed)
-            inv_perm_table = rng.inverse_permutation_table(n_genes, n_rand)
+            inv_perm_table = rng_obj.inverse_permutation_table(n_genes, n_rand)
     else:
         if verbose:
             print("  Generating permutation table (fast NumPy RNG)...")
@@ -959,6 +960,7 @@ def ridge_batch(
     batch_size: int = 5000,
     backend: Literal["auto", "numpy", "cupy"] = "auto",
     use_gsl_rng: bool = True,
+    rng_method: str = None,
     use_cache: bool = False,
     output_path: Optional[str] = None,
     output_compression: Optional[str] = "gzip",
@@ -1052,7 +1054,7 @@ def ridge_batch(
     if sps.issparse(Y):
         return _ridge_batch_sparse_path(
             X=X, Y=Y, lambda_=lambda_, n_rand=n_rand, seed=seed,
-            batch_size=batch_size, backend=backend, use_gsl_rng=use_gsl_rng,
+            batch_size=batch_size, backend=backend, use_gsl_rng=use_gsl_rng, rng_method=rng_method,
             use_cache=use_cache,
             output_path=output_path, output_compression=output_compression,
             feature_names=feature_names, sample_names=sample_names,
@@ -1132,12 +1134,12 @@ def ridge_batch(
     if verbose:
         print("  Loading inverse permutation table...")
 
-    if use_gsl_rng:
+    rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
+    if use_deterministic:
         if use_cache:
             inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
         else:
-            rng = GSLRNG(seed)
-            inv_perm_table = rng.inverse_permutation_table(n_genes, n_rand)
+            inv_perm_table = rng_obj.inverse_permutation_table(n_genes, n_rand)
     else:
         if verbose:
             print("  Generating permutation table (fast NumPy RNG)...")

@@ -149,7 +149,9 @@ from .ridge import (
 # RNG (for reproducibility testing)
 from .rng import (
     DEFAULT_CACHE_DIR,
+    CStdlibRNG,
     GSLRNG,
+    NumpyRNG,
     clear_perm_cache,
     generate_inverse_permutation_table,
     generate_inverse_permutation_table_fast,
@@ -217,7 +219,9 @@ __all__ = [
     "save_st_results_to_h5ad",
     "add_activity_to_anndata",
     # RNG and Caching
+    "CStdlibRNG",
     "GSLRNG",
+    "NumpyRNG",
     "generate_permutation_table",
     "generate_inverse_permutation_table",
     "generate_permutation_table_fast",

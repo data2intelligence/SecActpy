@@ -1,63 +1,58 @@
 """
-GSL-compatible Mersenne Twister RNG for R/RidgeR reproducibility.
+RNG backends for SecActPy permutation testing.
 
-This module provides an RNG that produces identical permutation sequences
-to GSL's MT19937 as used in RidgeR. This is essential for reproducing
-exact p-values and z-scores from the R package.
+This module provides three RNG backends that all use the same Fisher-Yates
+shuffle algorithm (matching R SecAct's C code) but differ in their source of
+random numbers:
 
-IMPORTANT - GSL Seed Behavior:
-------------------------------
-GSL treats seed=0 specially by using 4357 as the actual seed value.
-This is documented in GSL's source code (rng/mt.c):
+1. CStdlibRNG  -- C stdlib srand()/rand() via ctypes, matches R SecAct exactly
+                   on the same platform (default for use_gsl_rng=True)
+2. GSLRNG      -- Pure Python GSL MT19937, matches GSL's gsl_rng_mt19937
+3. NumpyRNG    -- NumPy's MT19937 BitGenerator (fast, no R compatibility)
 
-    if (s == 0)
-        s = 4357;   /* the default seed is 4357 */
+All three share the same shuffle formula from R SecAct's C code:
 
-This module replicates this behavior exactly, so:
-- GSLRNG(seed=0) internally uses seed=4357
-- This ensures identical results between Python and R/GSL
+    for (i = 0; i < n-1; i++) {
+        j = i + rand() / (RAND_MAX / (n - i) + 1);
+        swap(array[i], array[j]);
+    }
 
-RidgeR Algorithm (from C code):
--------------------------------
-1. Initialize MT19937 with seed (default: 0, which becomes 4357)
-2. Initialize array [0, 1, 2, ..., n-1]
-3. For each permutation:
-   a. Fisher-Yates shuffle the array (cumulative - each shuffle starts from previous state)
-   b. Copy the shuffled array to permutation table
+The only difference is what "rand()" and "RAND_MAX" are:
+- CStdlibRNG:  C stdlib rand(), RAND_MAX = 2147483647
+- GSLRNG:      MT19937 genrand_int32(), RAND_MAX = 0xFFFFFFFF
+- NumpyRNG:    NumPy MT19937 integers(), RAND_MAX = 0xFFFFFFFF
 
-GSL's Fisher-Yates shuffle:
----------------------------
-    for i in range(n-1):
-        j = i + gsl_rng_uniform_int(rng, n - i)
-        swap(array[i], array[j])
+IMPORTANT: Only CStdlibRNG matches R SecAct's output (on the same platform),
+because R SecAct uses C stdlib rand(), not GSL, for random number generation.
 
-Key insight: RidgeR uses CUMULATIVE shuffling - each permutation is a
-shuffle of the previous permutation, not a fresh shuffle of 0..n-1.
+NOTE: Cached permutation tables generated with the old GSLRNG-based default
+will have different values from CStdlibRNG. Clear caches after upgrading:
+    secactpy.clear_perm_cache()
 
 Usage:
 ------
-    >>> from secactpy.rng import GSLRNG, generate_permutation_table
+    >>> from secactpy.rng import GSLRNG, CStdlibRNG, generate_permutation_table
     >>>
-    >>> # Generate permutation table matching RidgeR
-    >>> rng = GSLRNG(seed=0)  # Uses 4357 internally, matching GSL
+    >>> # Match R SecAct exactly (default)
+    >>> rng = CStdlibRNG(seed=0)
     >>> table = rng.permutation_table(n=1000, n_perm=1000)
     >>>
-    >>> # Or use convenience function
-    >>> table = generate_permutation_table(n=1000, n_perm=1000, seed=0)
-
-References:
------------
-- GSL: https://www.gnu.org/software/gsl/doc/html/rng.html
-- GSL MT19937 source: https://git.savannah.gnu.org/cgit/gsl.git/tree/rng/mt.c
-- MT19937: https://en.wikipedia.org/wiki/Mersenne_Twister
-- RidgeR source: generate_permutation_table() in ridger.c
+    >>> # Old GSL-compatible behavior
+    >>> rng = GSLRNG(seed=0)
+    >>> table = rng.permutation_table(n=1000, n_perm=1000)
 """
+
+import ctypes
+import ctypes.util
+import os
 
 import numpy as np
 from typing import Optional, Tuple
 
 __all__ = [
+    'CStdlibRNG',
     'GSLRNG',
+    'NumpyRNG',
     'generate_permutation_table',
     'generate_inverse_permutation_table',
     'generate_permutation_table_fast',
@@ -73,8 +68,6 @@ __all__ = [
 # =============================================================================
 # Cache Configuration
 # =============================================================================
-
-import os
 
 DEFAULT_CACHE_DIR = "/data/parks34/.cache/ridgesig_perm_tables"
 
@@ -168,101 +161,42 @@ class MT19937Pure:
 
 
 # =============================================================================
-# GSL-Compatible RNG
+# Base RNG Class
 # =============================================================================
 
-class GSLRNG:
+class _BaseRNG:
     """
-    GSL-compatible Mersenne Twister RNG.
+    Base class for SecActPy RNG backends.
 
-    Produces identical sequences to GSL's gsl_rng_mt19937 when using
-    the same seed. Uses the exact GSL algorithm for bounded integer generation.
+    All backends use the same Fisher-Yates shuffle algorithm from R SecAct's
+    C code, differing only in their source of raw random integers.
 
-    Parameters
-    ----------
-    seed : int, optional
-        Random seed. Default is 0 (matching RidgeR default).
-
-    Examples
-    --------
-    >>> rng = GSLRNG(seed=0)
-    >>> perm_table = rng.permutation_table(n=100, n_perm=1000)
-    >>> perm_table.shape
-    (1000, 100)
-
-    >>> # Verify it's a valid permutation
-    >>> np.all(np.sort(perm_table[0]) == np.arange(100))
-    True
-
-    Notes
-    -----
-    This class matches GSL's behavior exactly, including:
-    - Seed initialization via MT19937 reference algorithm
-    - Bounded integer generation via GSL's rejection sampling
-    - Fisher-Yates shuffle with cumulative state
+    Subclasses must implement:
+    - _rand() -> int: return the next raw random integer
+    - _rand_max: the maximum value _rand() can return
+    - _seed_rng(seed): (re)initialize the underlying RNG with seed
     """
-
-    __slots__ = ('_seed', '_mt')
 
     def __init__(self, seed: int = 0):
-        """
-        Initialize RNG with seed.
-
-        Parameters
-        ----------
-        seed : int
-            Seed value. Use 0 for RidgeR compatibility.
-
-        Notes
-        -----
-        GSL treats seed=0 specially by using 4357 as the default seed.
-        This matches that behavior exactly.
-        """
         self._seed = seed
-        # GSL uses 4357 as default when seed=0
-        actual_seed = 4357 if seed == 0 else seed
-        self._mt = MT19937Pure(actual_seed)
+        self._seed_rng(seed)
 
-    def _get_raw(self) -> int:
-        """Get next raw 32-bit unsigned integer."""
-        return self._mt.genrand_int32()
+    def _rand(self) -> int:
+        raise NotImplementedError
 
-    def uniform_int(self, n: int) -> int:
-        """
-        Generate random integer in [0, n-1] using GSL's algorithm.
+    @property
+    def _rand_max(self) -> int:
+        raise NotImplementedError
 
-        This implements GSL's gsl_rng_uniform_int exactly:
-        - Uses rejection sampling to avoid modulo bias
-        - Identical to GSL when given same MT19937 state
-
-        Parameters
-        ----------
-        n : int
-            Upper bound (exclusive). Must be > 0.
-
-        Returns
-        -------
-        int
-            Random integer in [0, n-1]
-        """
-        if n <= 0:
-            raise ValueError("n must be positive")
-        if n > MT19937_MAX:
-            raise ValueError(f"n must be <= {MT19937_MAX}")
-
-        # GSL algorithm: rejection sampling with scaling
-        scale = MT19937_MAX // n
-
-        while True:
-            k = self._get_raw() // scale
-            if k < n:
-                return k
+    def _seed_rng(self, seed: int) -> None:
+        raise NotImplementedError
 
     def shuffle_inplace(self, arr: np.ndarray) -> None:
         """
-        Fisher-Yates shuffle matching GSL implementation.
+        Fisher-Yates shuffle matching R SecAct's C shuffle() exactly.
 
-        Modifies array in-place using the exact same algorithm as GSL.
+        Uses the bounded integer formula from R SecAct's C code:
+            j = i + rand() / (RAND_MAX / (n - i) + 1)
 
         Parameters
         ----------
@@ -270,16 +204,19 @@ class GSLRNG:
             Array to shuffle. Modified in-place.
         """
         n = len(arr)
+        rand_max = self._rand_max
         for i in range(n - 1):
-            j = i + self.uniform_int(n - i)
+            k = n - i
+            r = self._rand()
+            j = i + r // (rand_max // k + 1)
             arr[i], arr[j] = arr[j], arr[i]
 
     def permutation_table(self, n: int, n_perm: int) -> np.ndarray:
         """
-        Generate permutation table matching RidgeR exactly.
+        Generate permutation table using cumulative shuffling.
 
-        IMPORTANT: Uses cumulative shuffling like RidgeR - each permutation
-        is a shuffle of the previous state, not a fresh shuffle of 0..n-1.
+        Each permutation is a shuffle of the previous state, not a fresh
+        shuffle of 0..n-1. This matches R SecAct's ridgeReg behavior.
 
         Parameters
         ----------
@@ -311,8 +248,6 @@ class GSLRNG:
 
             T[:, inv_perm] @ Y == T @ Y[perm, :]
 
-        Where inv_perm[perm] = arange(n).
-
         Parameters
         ----------
         n : int
@@ -324,15 +259,6 @@ class GSLRNG:
         -------
         np.ndarray, shape (n_perm, n), dtype intp
             Each row is the inverse permutation.
-
-        Notes
-        -----
-        For permutation perm, the inverse inv_perm satisfies:
-        - inv_perm[perm[i]] = i for all i
-        - perm[inv_perm[j]] = j for all j
-
-        This allows T-column permutation (GPU/sparse-friendly) to produce
-        identical results to Y-row permutation (R's approach).
         """
         table = np.zeros((n_perm, n), dtype=np.intp)
         arr = np.arange(n, dtype=np.int32)
@@ -357,13 +283,167 @@ class GSLRNG:
         """
         if seed is not None:
             self._seed = seed
-        # GSL uses 4357 as default when seed=0
-        actual_seed = 4357 if self._seed == 0 else self._seed
-        self._mt = MT19937Pure(actual_seed)
+        self._seed_rng(self._seed)
 
 
 # =============================================================================
-# Convenience Function
+# CStdlibRNG - C stdlib srand()/rand() via ctypes
+# =============================================================================
+
+class CStdlibRNG(_BaseRNG):
+    """
+    RNG using C stdlib srand()/rand() via ctypes.
+
+    This matches R SecAct's C code exactly (on the same platform), because
+    R SecAct uses srand(0)/rand() from the C standard library, NOT GSL.
+
+    Parameters
+    ----------
+    seed : int, optional
+        Random seed. Default is 0 (matching R SecAct default).
+
+    Notes
+    -----
+    RAND_MAX is 2147483647 (0x7FFFFFFF) on Linux and macOS. This is a
+    31-bit RNG, unlike MT19937 which is 32-bit.
+
+    The seed is passed directly to srand() with no transformation
+    (unlike GSLRNG which maps seed=0 to 4357).
+    """
+
+    _RAND_MAX = 2147483647  # 0x7FFFFFFF, standard on Linux and macOS
+
+    def __init__(self, seed: int = 0):
+        self._libc = ctypes.CDLL(ctypes.util.find_library('c'))
+        self._libc.rand.restype = ctypes.c_int
+        self._libc.srand.argtypes = [ctypes.c_uint]
+        super().__init__(seed)
+
+    def _seed_rng(self, seed: int) -> None:
+        self._libc.srand(ctypes.c_uint(seed))
+
+    def _rand(self) -> int:
+        return self._libc.rand()
+
+    @property
+    def _rand_max(self) -> int:
+        return self._RAND_MAX
+
+
+# =============================================================================
+# GSLRNG - Pure Python GSL MT19937
+# =============================================================================
+
+class GSLRNG(_BaseRNG):
+    """
+    GSL-compatible Mersenne Twister RNG.
+
+    Produces identical raw sequences to GSL's gsl_rng_mt19937 when using
+    the same seed. The shuffle algorithm uses the same bounded-integer
+    formula as R SecAct's C code (not GSL's rejection sampling).
+
+    Parameters
+    ----------
+    seed : int, optional
+        Random seed. Default is 0 (matching RidgeR default).
+
+    Notes
+    -----
+    GSL treats seed=0 specially by using 4357 as the default seed.
+    This matches that behavior exactly.
+
+    NOTE: This RNG does NOT match R SecAct's output because R SecAct uses
+    C stdlib rand(), not GSL MT19937. Use CStdlibRNG for R compatibility.
+    """
+
+    def __init__(self, seed: int = 0):
+        # _mt must exist before super().__init__ calls _seed_rng
+        self._mt = None
+        super().__init__(seed)
+
+    def _seed_rng(self, seed: int) -> None:
+        # GSL uses 4357 as default when seed=0
+        actual_seed = 4357 if seed == 0 else seed
+        self._mt = MT19937Pure(actual_seed)
+
+    def _rand(self) -> int:
+        return self._mt.genrand_int32()
+
+    @property
+    def _rand_max(self) -> int:
+        return MT19937_MAX
+
+    def uniform_int(self, n: int) -> int:
+        """
+        Generate random integer in [0, n-1] using GSL's rejection algorithm.
+
+        This implements GSL's gsl_rng_uniform_int exactly. It is NOT used
+        by the shuffle (which uses the R SecAct formula), but is kept for
+        compatibility and testing.
+
+        Parameters
+        ----------
+        n : int
+            Upper bound (exclusive). Must be > 0.
+
+        Returns
+        -------
+        int
+            Random integer in [0, n-1]
+        """
+        if n <= 0:
+            raise ValueError("n must be positive")
+        if n > MT19937_MAX:
+            raise ValueError(f"n must be <= {MT19937_MAX}")
+
+        scale = MT19937_MAX // n
+        while True:
+            k = self._rand() // scale
+            if k < n:
+                return k
+
+
+# =============================================================================
+# NumpyRNG - NumPy MT19937
+# =============================================================================
+
+class NumpyRNG(_BaseRNG):
+    """
+    RNG using NumPy's MT19937 BitGenerator.
+
+    Fast alternative that uses NumPy's C-level MT19937 for random number
+    generation, with the same shuffle algorithm as the other backends.
+
+    Parameters
+    ----------
+    seed : int, optional
+        Random seed. Default is 0.
+
+    Notes
+    -----
+    This produces different permutations from both CStdlibRNG and GSLRNG
+    because NumPy's MT19937 initialization differs from GSL's (different
+    seeding algorithm). Use CStdlibRNG for R SecAct compatibility.
+    """
+
+    def __init__(self, seed: int = 0):
+        self._bg = None
+        super().__init__(seed)
+
+    def _seed_rng(self, seed: int) -> None:
+        self._bg = np.random.MT19937(seed)
+        self._gen = np.random.Generator(self._bg)
+
+    def _rand(self) -> int:
+        return int(self._gen.integers(0, MT19937_MAX + 1, dtype=np.uint64))
+
+    @property
+    def _rand_max(self) -> int:
+        return MT19937_MAX
+
+
+# =============================================================================
+# Convenience Functions
 # =============================================================================
 
 def generate_permutation_table(
@@ -372,9 +452,9 @@ def generate_permutation_table(
     seed: int = 0
 ) -> np.ndarray:
     """
-    Generate permutation table matching RidgeR.
+    Generate permutation table matching R SecAct.
 
-    Convenience function wrapping GSLRNG.permutation_table().
+    Uses CStdlibRNG (C stdlib rand()) which matches R SecAct's C code.
 
     Parameters
     ----------
@@ -383,7 +463,7 @@ def generate_permutation_table(
     n_perm : int
         Number of permutations.
     seed : int, default=0
-        Random seed. Use 0 for RidgeR compatibility.
+        Random seed. Use 0 for R SecAct compatibility.
 
     Returns
     -------
@@ -396,7 +476,7 @@ def generate_permutation_table(
     >>> table.shape
     (1000, 100)
     """
-    rng = GSLRNG(seed)
+    rng = CStdlibRNG(seed)
     return rng.permutation_table(n, n_perm)
 
 
@@ -408,14 +488,12 @@ def generate_inverse_permutation_table(
     """
     Generate inverse permutation table for T-column permutation.
 
+    Uses CStdlibRNG (C stdlib rand()) which matches R SecAct's C code.
+
     This generates the inverse of each permutation, enabling T-column
     permutation which is mathematically equivalent to Y-row permutation:
 
         T[:, inv_perm] @ Y == T @ Y[perm, :]
-
-    T-column permutation is more efficient for:
-    - GPU computation (Y stays in place on device)
-    - Sparse Y matrices (no need to permute sparse rows)
 
     Parameters
     ----------
@@ -424,7 +502,7 @@ def generate_inverse_permutation_table(
     n_perm : int
         Number of permutations.
     seed : int, default=0
-        Random seed. Use 0 for RidgeR compatibility.
+        Random seed. Use 0 for R SecAct compatibility.
 
     Returns
     -------
@@ -436,15 +514,8 @@ def generate_inverse_permutation_table(
     >>> inv_table = generate_inverse_permutation_table(100, 1000, seed=0)
     >>> inv_table.shape
     (1000, 100)
-
-    >>> # Verify equivalence
-    >>> perm_table = generate_permutation_table(100, 1000, seed=0)
-    >>> inv_table = generate_inverse_permutation_table(100, 1000, seed=0)
-    >>> perm = perm_table[0]
-    >>> inv_perm = inv_table[0]
-    >>> np.all(inv_perm[perm] == np.arange(100))  # True
     """
-    rng = GSLRNG(seed)
+    rng = CStdlibRNG(seed)
     return rng.inverse_permutation_table(n, n_perm)
 
 
@@ -460,7 +531,7 @@ def generate_inverse_permutation_table_fast(
     """
     Generate inverse permutation table using fast NumPy RNG.
 
-    This is ~70x faster than GSL-compatible RNG but produces different
+    This is ~70x faster than CStdlibRNG but produces different
     permutation sequences. Statistically equivalent for inference.
 
     Parameters
@@ -480,10 +551,10 @@ def generate_inverse_permutation_table_fast(
     Notes
     -----
     Use this for routine inference. Use generate_inverse_permutation_table()
-    only when exact R/RidgeR reproducibility is required.
+    only when exact R SecAct reproducibility is required.
 
     Speed comparison (n=7720, n_perm=1000):
-    - GSL-compatible: ~8.9s
+    - CStdlibRNG: ~8.9s
     - NumPy fast: ~0.12s
 
     Examples
@@ -513,7 +584,7 @@ def generate_permutation_table_fast(
     """
     Generate permutation table using fast NumPy RNG.
 
-    This is ~70x faster than GSL-compatible RNG but produces different
+    This is ~70x faster than CStdlibRNG but produces different
     permutation sequences. Statistically equivalent for inference.
 
     Parameters
@@ -766,7 +837,7 @@ def list_cached_tables(cache_dir: str = None) -> list:
 # Validation Functions
 # =============================================================================
 
-# Reference values for validation (from GSL with seed=0)
+# Reference values for validation (from GSL with seed=0 -> actual seed 4357)
 REFERENCE_MT19937_SEED0_FIRST10 = [
     2357136044, 2546248239, 3071714933, 3626093760, 2588848963,
     3684848379, 2340255427, 3638918503, 1819583497, 2678185683
@@ -832,21 +903,41 @@ def validate_gslrng() -> Tuple[bool, str]:
     return True, "GSLRNG implementation validated successfully"
 
 
+def validate_cstdlib_rng() -> Tuple[bool, str]:
+    """
+    Validate CStdlibRNG produces valid permutations.
+
+    Returns
+    -------
+    tuple
+        (success: bool, message: str)
+    """
+    rng = CStdlibRNG(seed=0)
+    table = rng.permutation_table(10, 5)
+
+    for i, row in enumerate(table):
+        if set(row) != set(range(10)):
+            return False, f"Permutation {i} is not a valid permutation of 0..9"
+
+    return True, "CStdlibRNG implementation validated successfully"
+
+
 def generate_c_validation_code() -> str:
     """
-    Generate C code to produce reference permutation table from GSL.
+    Generate C code to produce reference permutation table using srand/rand
+    (matching R SecAct's C code).
 
-    Compile with: gcc -o gen_perm gen_perm.c -lgsl -lgslcblas
+    Compile with: gcc -o gen_perm gen_perm.c && ./gen_perm
     """
     return '''
 #include <stdio.h>
 #include <stdlib.h>
-#include <gsl/gsl_rng.h>
 
-void shuffle_array(gsl_rng *rng, int *array, int n) {
-    for (int i = 0; i < n - 1; i++) {
-        int j = i + (int)gsl_rng_uniform_int(rng, (unsigned long)(n - i));
-        int tmp = array[j];
+void shuffle(int array[], const int n) {
+    int i, j, tmp;
+    for (i = 0; i < n - 1; i++) {
+        j = i + rand() / (RAND_MAX / (n - i) + 1);
+        tmp = array[j];
         array[j] = array[i];
         array[i] = tmp;
     }
@@ -855,27 +946,25 @@ void shuffle_array(gsl_rng *rng, int *array, int n) {
 int main() {
     int n = 10;
     int n_perm = 5;
-    unsigned long seed = 0;
 
-    gsl_rng *rng = gsl_rng_alloc(gsl_rng_mt19937);
-    gsl_rng_set(rng, seed);
+    srand(0);
 
     int *array = (int*)malloc(n * sizeof(int));
-    for (int i = 0; i < n; i++) array[i] = i;
+    int i, p;
+    for (i = 0; i < n; i++) array[i] = i;
 
-    printf("REFERENCE_PERM_TABLE = np.array([\\n");
-    for (int p = 0; p < n_perm; p++) {
-        shuffle_array(rng, array, n);
+    printf("REFERENCE_PERM_TABLE = [\\n");
+    for (p = 0; p < n_perm; p++) {
+        shuffle(array, n);
         printf("    [");
-        for (int i = 0; i < n; i++) {
+        for (i = 0; i < n; i++) {
             printf("%d", array[i]);
             if (i < n - 1) printf(", ");
         }
         printf("],  # perm %d\\n", p);
     }
-    printf("], dtype=np.int32)\\n");
+    printf("]\\n");
 
-    gsl_rng_free(rng);
     free(array);
     return 0;
 }
@@ -896,35 +985,42 @@ if __name__ == "__main__":
     # 1. Validate MT19937
     print("\n1. Validating MT19937 implementation...")
     success, msg = validate_mt19937()
-    print(f"   {'✓' if success else '✗'} {msg}")
+    print(f"   {'PASS' if success else 'FAIL'} {msg}")
 
     # 2. Validate GSLRNG
     print("\n2. Validating GSLRNG implementation...")
     success, msg = validate_gslrng()
-    print(f"   {'✓' if success else '✗'} {msg}")
+    print(f"   {'PASS' if success else 'FAIL'} {msg}")
 
-    # 3. Test permutation table generation
-    print("\n3. Testing permutation table generation...")
-    rng = GSLRNG(seed=0)
-    table = rng.permutation_table(10, 5)
-    print("   Permutation table (n=10, n_perm=5):")
-    for i, row in enumerate(table):
-        print(f"   perm[{i}] = {row.tolist()}")
+    # 3. Validate CStdlibRNG
+    print("\n3. Validating CStdlibRNG implementation...")
+    success, msg = validate_cstdlib_rng()
+    print(f"   {'PASS' if success else 'FAIL'} {msg}")
 
-    # 4. Performance benchmark
-    print("\n4. Performance benchmark...")
-    for n, n_perm in [(100, 100), (1000, 1000), (100, 10000)]:
-        rng = GSLRNG(seed=0)
-        start = time.time()
-        _ = rng.permutation_table(n, n_perm)
-        elapsed = time.time() - start
-        print(f"   n={n:4d}, n_perm={n_perm:5d}: {elapsed:.3f}s")
+    # 4. Compare all three RNGs
+    print("\n4. Permutation tables (n=10, n_perm=3):")
+    for name, rng_cls in [("CStdlibRNG", CStdlibRNG), ("GSLRNG", GSLRNG), ("NumpyRNG", NumpyRNG)]:
+        rng = rng_cls(seed=0)
+        table = rng.permutation_table(10, 3)
+        print(f"\n   {name}:")
+        for i, row in enumerate(table):
+            print(f"     perm[{i}] = {row.tolist()}")
 
-    # 5. Show C validation code
-    print("\n5. To generate reference data from GSL, compile and run:")
+    # 5. Performance benchmark
+    print("\n5. Performance benchmark...")
+    for n, n_perm in [(100, 100), (1000, 1000)]:
+        for name, rng_cls in [("CStdlibRNG", CStdlibRNG), ("GSLRNG", GSLRNG), ("NumpyRNG", NumpyRNG)]:
+            rng = rng_cls(seed=0)
+            start = time.time()
+            _ = rng.permutation_table(n, n_perm)
+            elapsed = time.time() - start
+            print(f"   {name:12s} n={n:4d}, n_perm={n_perm:5d}: {elapsed:.3f}s")
+
+    # 6. Show C validation code
+    print("\n6. To generate reference data from C stdlib, compile and run:")
     print("   " + "-" * 50)
     print("   Save the following to gen_perm.c and run:")
-    print("   gcc -o gen_perm gen_perm.c -lgsl -lgslcblas && ./gen_perm")
+    print("   gcc -o gen_perm gen_perm.c && ./gen_perm")
     print("   " + "-" * 50)
 
     print("\n" + "=" * 60)
