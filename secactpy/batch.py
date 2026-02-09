@@ -516,6 +516,23 @@ def _compute_projection_components(X: np.ndarray, lambda_: float) -> _Projection
 # Internal: Sparse Batch Processing Core
 # =============================================================================
 
+def _apply_normalization_numpy(
+    beta_raw: np.ndarray,
+    row_corr: Optional[np.ndarray],
+    sigma: Optional[np.ndarray],
+    correction: Optional[np.ndarray],
+) -> np.ndarray:
+    """Apply row-centering, column scaling, and column centering to raw projection."""
+    result = beta_raw
+    if row_corr is not None:
+        result = result - row_corr
+    if sigma is not None:
+        result = result / sigma
+    if correction is not None:
+        result = result - correction
+    return result
+
+
 def _process_sparse_batch_numpy(
     T: np.ndarray,
     c: np.ndarray,
@@ -525,12 +542,19 @@ def _process_sparse_batch_numpy(
     inv_perm_table: np.ndarray,
     n_rand: int,
     sparse_mode: bool = False,
-    row_means: Optional[np.ndarray] = None
+    row_means: Optional[np.ndarray] = None,
+    col_center: bool = True,
+    col_scale: bool = True,
+    mu: Optional[np.ndarray] = None
 ) -> dict[str, np.ndarray]:
     """
     Process a sparse batch using NumPy.
 
-    Applies in-flight normalization: beta = (T @ Y) / σ - c ⊗ (μ/σ)
+    Applies in-flight normalization controlled by col_center and col_scale:
+        col_center=True,  col_scale=True:  (T @ Y) / σ - c ⊗ (μ/σ)
+        col_center=True,  col_scale=False: T @ Y - c ⊗ μ
+        col_center=False, col_scale=True:  (T @ Y) / σ
+        col_center=False, col_scale=False: T @ Y
 
     When sparse_mode=True and Y_batch is sparse, avoids densifying by
     using (Y.T @ T.T).T instead of T @ Y.toarray().
@@ -542,8 +566,16 @@ def _process_sparse_batch_numpy(
     n_features = T.shape[0]
     is_sparse = sps.issparse(Y_batch)
 
-    # Correction term (constant across permutations; c = T.sum(axis=1))
-    correction = np.outer(c, mu_over_sigma)
+    # Precompute correction term based on col_center/col_scale flags
+    if col_center and col_scale:
+        correction = np.outer(c, mu_over_sigma)
+    elif col_center:
+        correction = np.outer(c, mu) if mu is not None else np.outer(c, mu_over_sigma)
+    else:
+        correction = None
+
+    # Sigma for scaling (None if col_scale is disabled)
+    sigma_norm = sigma if col_scale else None
 
     if is_sparse and sparse_mode:
         # Sparse-preserving path: avoid densifying Y_batch
@@ -553,13 +585,11 @@ def _process_sparse_batch_numpy(
         # (Y.T @ T.T).T == T @ Y, but Y stays sparse
         beta_raw = np.ascontiguousarray((Y_csc.T @ T.T).T)
 
-        # Row-centering correction: T @ mu_r (constant across permutations only
-        # if we don't permute — but T_perm @ mu_r changes per permutation)
         if row_means is not None:
-            row_corr_obs = (T @ row_means)[:, np.newaxis]  # (n_features, 1)
-            beta = (beta_raw - row_corr_obs) / sigma - correction
+            row_corr_obs = (T @ row_means)[:, np.newaxis]
         else:
-            beta = beta_raw / sigma - correction
+            row_corr_obs = None
+        beta = _apply_normalization_numpy(beta_raw, row_corr_obs, sigma_norm, correction)
 
         # Permutation testing
         aver = np.zeros((n_features, batch_size), dtype=np.float64)
@@ -574,9 +604,9 @@ def _process_sparse_batch_numpy(
 
             if row_means is not None:
                 row_corr_perm = (T_perm @ row_means)[:, np.newaxis]
-                beta_perm = (beta_raw_perm - row_corr_perm) / sigma - correction
             else:
-                beta_perm = beta_raw_perm / sigma - correction
+                row_corr_perm = None
+            beta_perm = _apply_normalization_numpy(beta_raw_perm, row_corr_perm, sigma_norm, correction)
 
             pvalue_counts += (np.abs(beta_perm) >= abs_beta).astype(np.float64)
             aver += beta_perm
@@ -594,9 +624,9 @@ def _process_sparse_batch_numpy(
 
         if row_means is not None:
             row_corr_obs = (T @ row_means)[:, np.newaxis]
-            beta = (beta_raw - row_corr_obs) / sigma - correction
         else:
-            beta = beta_raw / sigma - correction
+            row_corr_obs = None
+        beta = _apply_normalization_numpy(beta_raw, row_corr_obs, sigma_norm, correction)
 
         # Permutation testing
         aver = np.zeros((n_features, batch_size), dtype=np.float64)
@@ -611,9 +641,9 @@ def _process_sparse_batch_numpy(
 
             if row_means is not None:
                 row_corr_perm = (T_perm @ row_means)[:, np.newaxis]
-                beta_perm = (beta_raw_perm - row_corr_perm) / sigma - correction
             else:
-                beta_perm = beta_raw_perm / sigma - correction
+                row_corr_perm = None
+            beta_perm = _apply_normalization_numpy(beta_raw_perm, row_corr_perm, sigma_norm, correction)
 
             pvalue_counts += (np.abs(beta_perm) >= abs_beta).astype(np.float64)
             aver += beta_perm
@@ -638,9 +668,15 @@ def _process_sparse_batch_cupy(
     inv_perm_table: np.ndarray,
     n_rand: int,
     sparse_mode: bool = False,
-    row_means: Optional[np.ndarray] = None
+    row_means: Optional[np.ndarray] = None,
+    col_center: bool = True,
+    col_scale: bool = True,
+    mu: Optional[np.ndarray] = None
 ) -> dict[str, np.ndarray]:
     """Process a sparse batch using CuPy with in-flight normalization.
+
+    Normalization is controlled by col_center and col_scale flags
+    (see _process_sparse_batch_numpy for the full formula table).
 
     When sparse_mode=True and Y_batch is sparse, transfers Y as a CuPy
     sparse matrix and uses (Y.T @ T.T).T to avoid densifying.
@@ -655,8 +691,9 @@ def _process_sparse_batch_cupy(
     # Transfer to GPU
     T_gpu = cp.asarray(T, dtype=cp.float64)
     c_gpu = cp.asarray(c, dtype=cp.float64)
-    sigma_gpu = cp.asarray(sigma, dtype=cp.float64)
-    mu_over_sigma_gpu = cp.asarray(mu_over_sigma, dtype=cp.float64)
+    sigma_gpu = cp.asarray(sigma, dtype=cp.float64) if col_scale else None
+    mu_over_sigma_gpu = cp.asarray(mu_over_sigma, dtype=cp.float64) if (col_center and col_scale) else None
+    mu_gpu = cp.asarray(mu, dtype=cp.float64) if (col_center and not col_scale and mu is not None) else None
     row_means_gpu = cp.asarray(row_means, dtype=cp.float64) if row_means is not None else None
 
     use_sparse_gpu = is_sparse and sparse_mode
@@ -672,8 +709,13 @@ def _process_sparse_batch_cupy(
             Y_gpu = cp.asarray(Y_batch, dtype=cp.float64)
         batch_size = Y_gpu.shape[1]
 
-    # Correction term
-    correction_gpu = cp.outer(c_gpu, mu_over_sigma_gpu)
+    # Precompute correction term based on col_center/col_scale flags
+    if col_center and col_scale:
+        correction_gpu = cp.outer(c_gpu, mu_over_sigma_gpu)
+    elif col_center:
+        correction_gpu = cp.outer(c_gpu, mu_gpu)
+    else:
+        correction_gpu = None
 
     # Compute beta
     if use_sparse_gpu:
@@ -681,11 +723,16 @@ def _process_sparse_batch_cupy(
     else:
         beta_raw_gpu = T_gpu @ Y_gpu
 
+    # Apply normalization
+    result_gpu = beta_raw_gpu
     if row_means_gpu is not None:
         row_corr_gpu = (T_gpu @ row_means_gpu)[:, cp.newaxis]
-        beta_gpu = (beta_raw_gpu - row_corr_gpu) / sigma_gpu - correction_gpu
-    else:
-        beta_gpu = beta_raw_gpu / sigma_gpu - correction_gpu
+        result_gpu = result_gpu - row_corr_gpu
+    if sigma_gpu is not None:
+        result_gpu = result_gpu / sigma_gpu
+    if correction_gpu is not None:
+        result_gpu = result_gpu - correction_gpu
+    beta_gpu = result_gpu
 
     # Permutation testing
     aver_gpu = cp.zeros((n_features, batch_size), dtype=cp.float64)
@@ -705,11 +752,15 @@ def _process_sparse_batch_cupy(
         else:
             beta_raw_perm_gpu = T_perm_gpu @ Y_gpu
 
+        perm_result_gpu = beta_raw_perm_gpu
         if row_means_gpu is not None:
             row_corr_perm_gpu = (T_perm_gpu @ row_means_gpu)[:, cp.newaxis]
-            beta_perm_gpu = (beta_raw_perm_gpu - row_corr_perm_gpu) / sigma_gpu - correction_gpu
-        else:
-            beta_perm_gpu = beta_raw_perm_gpu / sigma_gpu - correction_gpu
+            perm_result_gpu = perm_result_gpu - row_corr_perm_gpu
+        if sigma_gpu is not None:
+            perm_result_gpu = perm_result_gpu / sigma_gpu
+        if correction_gpu is not None:
+            perm_result_gpu = perm_result_gpu - correction_gpu
+        beta_perm_gpu = perm_result_gpu
 
         pvalue_counts_gpu += (cp.abs(beta_perm_gpu) >= abs_beta_gpu).astype(cp.float64)
         aver_gpu += beta_perm_gpu
@@ -731,10 +782,18 @@ def _process_sparse_batch_cupy(
     }
 
     # Cleanup
-    del T_gpu, c_gpu, Y_gpu, sigma_gpu, mu_over_sigma_gpu, correction_gpu
+    del T_gpu, c_gpu, Y_gpu
     del beta_raw_gpu, beta_gpu, inv_perm_table_gpu
     del aver_gpu, aver_sq_gpu, pvalue_counts_gpu, abs_beta_gpu
     del mean_gpu, var_gpu, se_gpu, zscore_gpu, pvalue_gpu
+    if sigma_gpu is not None:
+        del sigma_gpu
+    if mu_over_sigma_gpu is not None:
+        del mu_over_sigma_gpu
+    if mu_gpu is not None:
+        del mu_gpu
+    if correction_gpu is not None:
+        del correction_gpu
     if row_means_gpu is not None:
         del row_means_gpu
     cp.get_default_memory_pool().free_all_blocks()
@@ -765,11 +824,13 @@ def _ridge_batch_sparse_path(
     verbose: bool,
     start_time: float,
     sparse_mode: bool = False,
-    row_center: bool = False
+    row_center: bool = False,
+    col_center: bool = True,
+    col_scale: bool = True
 ) -> Optional[dict[str, Any]]:
     """
     Internal sparse path for ridge_batch.
-    
+
     Key optimization: Computes population stats ONCE from full Y,
     then slices stats per batch instead of recomputing.
     """
@@ -883,7 +944,10 @@ def _ridge_batch_sparse_path(
                 batch_stats.sigma, batch_stats.mu_over_sigma,
                 inv_perm_table, n_rand,
                 sparse_mode=sparse_mode,
-                row_means=batch_stats.row_means
+                row_means=batch_stats.row_means,
+                col_center=col_center,
+                col_scale=col_scale,
+                mu=batch_stats.mu
             )
         else:
             batch_result = _process_sparse_batch_numpy(
@@ -891,7 +955,10 @@ def _ridge_batch_sparse_path(
                 batch_stats.sigma, batch_stats.mu_over_sigma,
                 inv_perm_table, n_rand,
                 sparse_mode=sparse_mode,
-                row_means=batch_stats.row_means
+                row_means=batch_stats.row_means,
+                col_center=col_center,
+                col_scale=col_scale,
+                mu=batch_stats.mu
             )
         
         # Store or write
@@ -969,6 +1036,8 @@ def ridge_batch(
     progress_callback: Optional[Callable[[int, int], None]] = None,
     sparse_mode: bool = False,
     row_center: bool = False,
+    col_center: bool = True,
+    col_scale: bool = True,
     verbose: bool = False
 ) -> Optional[dict[str, Any]]:
     """
@@ -1023,6 +1092,14 @@ def ridge_batch(
         row-centered data (Y - row_mean) without actually densifying Y.
         Used by high-level scRNAseq/ST functions to keep the full
         pipeline sparse.
+    col_center : bool, default=True
+        When True (default), subtract column means during in-flight
+        normalization of sparse Y. Only used for sparse path; ignored
+        for dense Y (which should be pre-centered).
+    col_scale : bool, default=True
+        When True (default), divide by column standard deviations during
+        in-flight normalization of sparse Y. Only used for sparse path;
+        ignored for dense Y (which should be pre-scaled).
     verbose : bool, default=False
         Print progress information.
 
@@ -1060,7 +1137,9 @@ def ridge_batch(
             feature_names=feature_names, sample_names=sample_names,
             progress_callback=progress_callback, verbose=verbose,
             start_time=start_time, sparse_mode=sparse_mode,
-            row_center=row_center
+            row_center=row_center,
+            col_center=col_center,
+            col_scale=col_scale
         )
     
     # === DENSE PATH ===

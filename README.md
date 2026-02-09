@@ -350,48 +350,87 @@ centering + column z-scoring are handled in-flight by `ridge_batch`.
 | Speed (5-10% density) | Baseline | ~25% slower |
 | Results | Identical | Identical |
 
-#### Advanced: `ridge_batch` for full control
+#### Advanced: Low-Level `ridge` and `ridge_batch`
 
 The high-level functions handle gene subsetting, scaling, centering, and
 streaming output automatically. If you need more control — for example, to
-pass a pre-processed sparse matrix directly — use the lower-level `ridge_batch`
-function.
+pass a pre-processed sparse matrix directly — use the low-level functions:
 
-**How dense and sparse inputs are handled.** `ridge_batch` processes Y in
-chunks and needs whole-column statistics (mean, standard deviation) for z-score
-normalization. How it gets those statistics depends on the input format:
+| Function | Input | Best for |
+|----------|-------|----------|
+| `ridge()` | Dense or sparse Y (fits in memory) | Small-to-medium datasets, single-call |
+| `ridge_batch()` | Dense or sparse Y (any size) | Large datasets, streaming output |
 
-- **Dense (NumPy array):** You must z-score normalize Y yourself before calling,
-  since `ridge_batch` does not scan the full array upfront.
-- **Sparse (`scipy.sparse` matrix):** Column statistics are computed efficiently
-  from the sparse structure upfront (no dense conversion needed), then z-score
-  normalization is applied on-the-fly within each batch.
+Both functions support the same `backend` options (`'numpy'`, `'cupy'`,
+`'auto'`), `sparse_mode`, `col_center`, `col_scale`, and produce identical
+results for the same inputs.
 
-With `sparse_mode=True`, the sparse matrix is never densified — the matrix
-multiplication uses `(Y.T @ T.T).T` and normalization corrections are applied
-to the small output. You can also enable `row_center=True` to apply row-mean
-centering in-flight (used internally by the scrnaseq/ST functions when data
-hasn't been pre-centered):
+**Dense vs sparse inputs.** How normalization is handled depends on the
+input format:
+
+- **Dense (NumPy array):** You must z-score normalize Y yourself before
+  calling, since neither `ridge()` nor `ridge_batch()` scans the full dense
+  array upfront. The `col_center`/`col_scale` flags are ignored.
+- **Sparse (`scipy.sparse` matrix):** Column statistics are computed
+  efficiently from the sparse structure, then normalization is applied
+  in-flight. Use `col_center` and `col_scale` to control which normalization
+  steps are applied (both default to `True`).
+
+**Column normalization flags for sparse Y.** When Y is sparse, the
+`col_center` and `col_scale` parameters control in-flight normalization:
+
+| `col_center` | `col_scale` | Formula | Description |
+|---|---|---|---|
+| `True` | `True` | `(T @ Y) / σ - c ⊗ (μ/σ)` | Full z-scoring (default) |
+| `True` | `False` | `T @ Y - c ⊗ μ` | Mean-center only |
+| `False` | `True` | `(T @ Y) / σ` | Scale only |
+| `False` | `False` | `T @ Y` | Raw projection |
+
+These flags work with both `ridge()` and `ridge_batch()`, and with both
+`sparse_mode=True` and `sparse_mode=False`.
 
 ```python
-from secactpy import ridge_batch
+from secactpy import ridge, ridge_batch
 
-# Sparse end-to-end: no densification, in-flight normalization
+# --- ridge() with sparse Y ---
+# Full in-flight z-scoring (matches pre-scaled dense input)
+result = ridge(X, Y_sparse, sparse_mode=True)
+
+# Raw projection without normalization
+result = ridge(X, Y_sparse, sparse_mode=True,
+               col_center=False, col_scale=False)
+
+# --- ridge_batch() with sparse Y ---
+# Sparse end-to-end with in-flight normalization and row centering
 result = ridge_batch(
     X, Y_sparse,
     batch_size=5000,
     sparse_mode=True,    # keep Y sparse during T @ Y
-    row_center=True      # apply row-mean centering in-flight
+    row_center=True,     # apply row-mean centering in-flight
+    col_center=True,     # subtract column means (default)
+    col_scale=True       # divide by column stds (default)
+)
+
+# Raw sparse projection (no column normalization)
+result = ridge_batch(
+    X, Y_sparse,
+    batch_size=5000,
+    col_center=False, col_scale=False
 )
 ```
 
-**If you do not want automatic sparse scaling**, convert to dense first and
-normalize however you like (or not at all):
+**If you do not want automatic sparse scaling**, you can either set
+`col_center=False, col_scale=False`, or convert to dense and normalize
+however you like:
 
 ```python
 from secactpy import ridge_batch
 
-# Opt out of auto-scaling: convert sparse to dense, apply your own processing
+# Option 1: Disable in-flight normalization
+result = ridge_batch(X, Y_sparse, batch_size=5000,
+                     col_center=False, col_scale=False)
+
+# Option 2: Convert to dense, apply your own processing
 Y_dense = Y_sparse.toarray().astype(np.float64)
 # ... apply your own normalization (or skip it) ...
 result = ridge_batch(X, Y_dense, batch_size=5000)
@@ -433,6 +472,8 @@ All three inference functions support `batch_size`, `output_path`, and
 | `backend` | `'auto'` | 'auto', 'numpy', or 'cupy' |
 | `use_cache` | `False` | Cache permutation tables to disk |
 | `sparse_mode` | `False` | Keep sparse Y in sparse format (avoids densification) |
+| `col_center` | `True` | Subtract column means during sparse in-flight normalization |
+| `col_scale` | `True` | Divide by column stds during sparse in-flight normalization |
 
 ### ST-Specific Parameters
 
@@ -631,6 +672,13 @@ If you use SecActPy in your research, please cite:
 MIT License - see [LICENSE](LICENSE) for details.
 
 ## Changelog
+
+### v0.2.4
+- `col_center` and `col_scale` parameters for `ridge()` and `ridge_batch()`:
+  independently control column mean subtraction and column std scaling during
+  in-flight normalization of sparse Y (both default to `True`)
+- `ridge()` sparse path now supports in-flight column normalization (matching
+  `ridge_batch()` behavior)
 
 ### v0.2.3
 - `rng_method` parameter for explicit RNG selection: `'srand'` (match R SecAct), `'gsl'` (cross-platform), `'numpy'` (fast)

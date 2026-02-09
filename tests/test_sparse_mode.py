@@ -26,7 +26,8 @@ def test_ridge_sparse_mode_matches_dense():
     result_dense = ridge(X, Y_dense, lambda_=5e5, n_rand=50, seed=0,
                          backend='numpy')
     result_sparse = ridge(X, Y_sparse, lambda_=5e5, n_rand=50, seed=0,
-                          backend='numpy', sparse_mode=True)
+                          backend='numpy', sparse_mode=True,
+                          col_center=False, col_scale=False)
 
     for key in ['beta', 'se', 'zscore', 'pvalue']:
         np.testing.assert_allclose(
@@ -72,7 +73,8 @@ def test_ridge_sparse_mode_ttest_fallback():
     Y_dense = Y_sparse.toarray()
 
     result_sparse = ridge(X, Y_sparse, lambda_=5e5, n_rand=0,
-                          backend='numpy', sparse_mode=True)
+                          backend='numpy', sparse_mode=True,
+                          col_center=False, col_scale=False)
     result_dense = ridge(X, Y_dense, lambda_=5e5, n_rand=0,
                          backend='numpy')
 
@@ -96,7 +98,8 @@ def test_ridge_sparse_mode_csr_input():
     Y_dense = Y_csr.toarray()
 
     result_sparse = ridge(X, Y_csr, lambda_=5e5, n_rand=50, seed=0,
-                          backend='numpy', sparse_mode=True)
+                          backend='numpy', sparse_mode=True,
+                          col_center=False, col_scale=False)
     result_dense = ridge(X, Y_dense, lambda_=5e5, n_rand=50, seed=0,
                          backend='numpy')
 

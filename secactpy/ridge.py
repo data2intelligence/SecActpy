@@ -131,6 +131,8 @@ def ridge(
     rng_method: Literal["srand", "gsl", "numpy", None] = None,
     use_cache: bool = False,
     sparse_mode: bool = False,
+    col_center: bool = True,
+    col_scale: bool = True,
     verbose: bool = False
 ) -> dict[str, Any]:
     """
@@ -171,6 +173,15 @@ def ridge(
         30-40x more memory-efficient for very sparse data (<5% density).
         Trade-off: ~25% slower at 5-10% density. Default (False) keeps
         the original dense behavior.
+    col_center : bool, default=True
+        When True (default), subtract column means during in-flight
+        normalization of sparse Y. Only used when sparse_mode=True;
+        ignored for dense Y (which should be pre-centered).
+    col_scale : bool, default=True
+        When True (default), divide by column standard deviations during
+        in-flight normalization of sparse Y. Only used when
+        sparse_mode=True; ignored for dense Y (which should be
+        pre-scaled).
     verbose : bool, default=False
         Print progress information.
 
@@ -279,9 +290,9 @@ def ridge(
 
     if is_sparse_Y:
         if backend == "cupy":
-            result = _ridge_sparse_cupy(X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method, use_cache, verbose)
+            result = _ridge_sparse_cupy(X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method, use_cache, verbose, col_center=col_center, col_scale=col_scale)
         else:
-            result = _ridge_sparse_permutation_numpy(X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method, use_cache, verbose)
+            result = _ridge_sparse_permutation_numpy(X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method, use_cache, verbose, col_center=col_center, col_scale=col_scale)
     elif backend == "cupy":
         result = _ridge_cupy(X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method, use_cache, verbose)
     else:
@@ -673,6 +684,36 @@ def _ridge_cupy(
 # NumPy Backend - Sparse Permutation Test
 # =============================================================================
 
+def _sparse_col_stats(Y: sps.spmatrix, ddof: int = 1):
+    """Compute column mean, std, and mean/std from a sparse matrix."""
+    n_genes = Y.shape[0]
+    col_sums = np.asarray(Y.sum(axis=0)).ravel()
+    mu = col_sums / n_genes
+    Y_sq = Y.multiply(Y)
+    col_sum_sq = np.asarray(Y_sq.sum(axis=0)).ravel()
+    variance = (col_sum_sq - n_genes * mu ** 2) / (n_genes - ddof)
+    variance = np.maximum(variance, 0)
+    sigma = np.sqrt(variance)
+    sigma = np.where(sigma < EPS, 1.0, sigma)
+    mu_over_sigma = mu / sigma
+    return mu, sigma, mu_over_sigma
+
+
+def _apply_sparse_normalization_numpy(
+    beta_raw: np.ndarray,
+    sigma: np.ndarray,
+    correction: np.ndarray,
+    col_scale: bool,
+) -> np.ndarray:
+    """Apply conditional column normalization to raw projection."""
+    result = beta_raw
+    if col_scale:
+        result = result / sigma
+    if correction is not None:
+        result = result - correction
+    return result
+
+
 def _ridge_sparse_permutation_numpy(
     X: np.ndarray,
     Y: sps.spmatrix,
@@ -682,7 +723,9 @@ def _ridge_sparse_permutation_numpy(
     use_gsl_rng: bool,
     rng_method: str,
     use_cache: bool,
-    verbose: bool
+    verbose: bool,
+    col_center: bool = True,
+    col_scale: bool = True
 ) -> dict[str, np.ndarray]:
     """
     NumPy implementation of ridge regression with sparse Y preservation.
@@ -690,6 +733,13 @@ def _ridge_sparse_permutation_numpy(
     Avoids densifying Y by using (Y.T @ T.T).T instead of T @ Y.
     Uses T-column permutation which is mathematically equivalent to Y-row
     permutation.
+
+    When col_center and/or col_scale are True, applies in-flight
+    normalization:
+        col_center=True,  col_scale=True:  (T @ Y) / σ - c ⊗ (μ/σ)
+        col_center=True,  col_scale=False: T @ Y - c ⊗ μ
+        col_center=False, col_scale=True:  (T @ Y) / σ
+        col_center=False, col_scale=False: T @ Y  (raw projection)
     """
     n_genes, n_features = X.shape
     n_samples = Y.shape[1]
@@ -710,12 +760,31 @@ def _ridge_sparse_permutation_numpy(
 
     T = XtX_inv @ X.T  # (n_features, n_genes)
 
+    # --- Step 1b: Compute normalization components ---
+    needs_norm = col_center or col_scale
+    if needs_norm:
+        mu, sigma, mu_over_sigma = _sparse_col_stats(Y)
+        c = T.sum(axis=1)  # (n_features,)
+        if col_center and col_scale:
+            correction = np.outer(c, mu_over_sigma)
+        elif col_center:
+            correction = np.outer(c, mu)
+        else:
+            correction = None
+    else:
+        sigma = None
+        correction = None
+
     # --- Step 2: Compute observed beta using sparse-preserving matmul ---
     if verbose:
         print("  computing beta (sparse path)...")
 
     # (Y.T @ T.T).T == T @ Y, but Y stays sparse (CSC.T → CSR is free)
-    beta = np.ascontiguousarray((Y.T @ T.T).T)
+    beta_raw = np.ascontiguousarray((Y.T @ T.T).T)
+    if needs_norm:
+        beta = _apply_sparse_normalization_numpy(beta_raw, sigma, correction, col_scale)
+    else:
+        beta = beta_raw
 
     # --- Step 3: Permutation testing with T-column permutation ---
     if verbose:
@@ -746,7 +815,11 @@ def _ridge_sparse_permutation_numpy(
         T_perm = T[:, inv_perm_idx]
 
         # Sparse-preserving: (Y.T @ T_perm.T).T
-        beta_perm = np.ascontiguousarray((Y.T @ T_perm.T).T)
+        beta_raw_perm = np.ascontiguousarray((Y.T @ T_perm.T).T)
+        if needs_norm:
+            beta_perm = _apply_sparse_normalization_numpy(beta_raw_perm, sigma, correction, col_scale)
+        else:
+            beta_perm = beta_raw_perm
 
         pvalue_counts += (np.abs(beta_perm) >= abs_beta).astype(np.float64)
         aver += beta_perm
@@ -783,13 +856,16 @@ def _ridge_sparse_cupy(
     use_gsl_rng: bool,
     rng_method: str,
     use_cache: bool,
-    verbose: bool
+    verbose: bool,
+    col_center: bool = True,
+    col_scale: bool = True
 ) -> dict[str, np.ndarray]:
     """
     CuPy GPU implementation of ridge regression with sparse Y preservation.
 
     Transfers Y to GPU as a CuPy sparse matrix and uses (Y.T @ T.T).T
-    to avoid densifying.
+    to avoid densifying. Normalization controlled by col_center/col_scale
+    (see _ridge_sparse_permutation_numpy for the formula table).
     """
     if not CUPY_AVAILABLE or cp is None:
         raise RuntimeError("CuPy not available")
@@ -798,6 +874,11 @@ def _ridge_sparse_cupy(
 
     n_genes, n_features = X.shape
     n_samples = Y.shape[1]
+    needs_norm = col_center or col_scale
+
+    # --- Compute normalization stats on CPU before GPU transfer ---
+    if needs_norm:
+        mu, sigma, mu_over_sigma = _sparse_col_stats(Y)
 
     # --- Transfer to GPU ---
     if verbose:
@@ -830,12 +911,39 @@ def _ridge_sparse_cupy(
     del XtX, XtX_reg, X_gpu, XtX_inv
     cp.get_default_memory_pool().free_all_blocks()
 
+    # --- Step 1b: Compute normalization components on GPU ---
+    if needs_norm:
+        sigma_gpu = cp.asarray(sigma, dtype=cp.float64) if col_scale else None
+        c_gpu = T_gpu.sum(axis=1)
+        if col_center and col_scale:
+            mu_over_sigma_gpu = cp.asarray(mu_over_sigma, dtype=cp.float64)
+            correction_gpu = cp.outer(c_gpu, mu_over_sigma_gpu)
+            del mu_over_sigma_gpu
+        elif col_center:
+            mu_gpu = cp.asarray(mu, dtype=cp.float64)
+            correction_gpu = cp.outer(c_gpu, mu_gpu)
+            del mu_gpu
+        else:
+            correction_gpu = None
+        del c_gpu
+    else:
+        sigma_gpu = None
+        correction_gpu = None
+
     # --- Step 2: Compute observed beta (sparse) ---
     if verbose:
         print("  computing beta on GPU (sparse path)...")
 
     # Y_gpu.T is CSR, T_gpu.T is dense → sparse @ dense → dense
-    beta_gpu = (Y_gpu.T @ T_gpu.T).T
+    beta_raw_gpu = (Y_gpu.T @ T_gpu.T).T
+    if needs_norm:
+        beta_gpu = beta_raw_gpu
+        if col_scale:
+            beta_gpu = beta_gpu / sigma_gpu
+        if correction_gpu is not None:
+            beta_gpu = beta_gpu - correction_gpu
+    else:
+        beta_gpu = beta_raw_gpu
 
     # --- Step 3: Permutation testing ---
     if verbose:
@@ -866,7 +974,15 @@ def _ridge_sparse_cupy(
             inv_perm_idx_gpu = cp.asarray(inv_perm_idx, dtype=cp.intp)
 
             T_perm = T_gpu[:, inv_perm_idx_gpu]
-            beta_perm = (Y_gpu.T @ T_perm.T).T
+            beta_raw_perm = (Y_gpu.T @ T_perm.T).T
+            if needs_norm:
+                beta_perm = beta_raw_perm
+                if col_scale:
+                    beta_perm = beta_perm / sigma_gpu
+                if correction_gpu is not None:
+                    beta_perm = beta_perm - correction_gpu
+            else:
+                beta_perm = beta_raw_perm
 
             pvalue_counts += (cp.abs(beta_perm) >= abs_beta).astype(cp.float64)
             aver += beta_perm
@@ -897,6 +1013,10 @@ def _ridge_sparse_cupy(
 
     del T_gpu, Y_gpu, beta_gpu, aver, aver_sq, pvalue_counts
     del abs_beta, mean, var, se_gpu, zscore_gpu, pvalue_gpu
+    if sigma_gpu is not None:
+        del sigma_gpu
+    if correction_gpu is not None:
+        del correction_gpu
     cp.get_default_memory_pool().free_all_blocks()
     gc.collect()
 
