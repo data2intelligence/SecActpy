@@ -1047,8 +1047,8 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv=None) -> int:
-    """Main entry point."""
+def build_parser() -> argparse.ArgumentParser:
+    """Build and return the CLI argument parser."""
     parser = argparse.ArgumentParser(
         prog="secactpy",
         description="SecActPy: Secreted protein activity inference from gene expression",
@@ -1310,6 +1310,13 @@ For more information, visit: https://github.com/data2intelligence/SecActpy
         help="Show nested structure details"
     )
     inspect_parser.set_defaults(func=cmd_inspect)
+
+    return parser
+
+
+def main(argv=None) -> int:
+    """Main entry point."""
+    parser = build_parser()
 
     # Parse arguments
     args = parser.parse_args(argv)

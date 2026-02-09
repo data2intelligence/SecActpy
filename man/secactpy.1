@@ -1,0 +1,450 @@
+.TH SECACTPY "1" "2026\-02\-09" "secactpy" "Generated Python Manual"
+.SH NAME
+secactpy \- Secreted protein activity inference from gene expression
+.SH SYNOPSIS
+.B secactpy
+[-h] [--version] <command> ...
+.SH DESCRIPTION
+SecActPy: Secreted protein activity inference from gene expression
+
+.SH OPTIONS
+.TP
+\fB\-\-version\fR
+show program's version number and exit
+
+.SH
+COMMANDS
+.TP
+\fBsecactpy\fR \fI\,bulk\/\fR
+Bulk RNA\-seq inference
+.TP
+\fBsecactpy\fR \fI\,scrnaseq\/\fR
+scRNA\-seq inference
+.TP
+\fBsecactpy\fR \fI\,visium\/\fR
+Visium spatial transcriptomics inference
+.TP
+\fBsecactpy\fR \fI\,cosmx\/\fR
+CosMx spatial transcriptomics inference
+.TP
+\fBsecactpy\fR \fI\,compare\/\fR
+Compare two H5AD files for validation
+.TP
+\fBsecactpy\fR \fI\,convert\/\fR
+Convert R\-format H5AD to Python\-compatible format
+.TP
+\fBsecactpy\fR \fI\,inspect\/\fR
+Inspect H5AD file structure
+
+.SH COMMAND \fI\,'secactpy bulk'\/\fR
+usage: secactpy bulk [\-h] \-i INPUT \-o OUTPUT [\-s {secact,cytosig}]
+                     [\-\-lambda LAMBDA_] [\-n N_RAND] [\-\-seed SEED]
+                     [\-\-backend {auto,numpy,cupy}] [\-\-batch\-size BATCH_SIZE]
+                     [\-\-use\-cache] [\-\-sort\-genes] [\-v] [\-q] [\-d]
+                     [\-\-sig\-filter] [\-\-transpose]
+
+Infer secreted protein activity from bulk RNA\-seq data
+
+.SH OPTIONS \fI\,'secactpy bulk'\/\fR
+.TP
+\fB\-i\fR \fI\,INPUT\/\fR, \fB\-\-input\fR \fI\,INPUT\/\fR
+Input file or directory
+
+.TP
+\fB\-o\fR \fI\,OUTPUT\/\fR, \fB\-\-output\fR \fI\,OUTPUT\/\fR
+Output H5AD file
+
+.TP
+\fB\-s\fR \fI\,{secact,cytosig}\/\fR, \fB\-\-signature\fR \fI\,{secact,cytosig}\/\fR
+Signature matrix (default: secact)
+
+.TP
+\fB\-\-lambda\fR \fI\,LAMBDA_\/\fR
+Ridge regularization parameter (default: 5e5)
+
+.TP
+\fB\-n\fR \fI\,N_RAND\/\fR, \fB\-\-n\-rand\fR \fI\,N_RAND\/\fR
+Number of permutations (default: 1000)
+
+.TP
+\fB\-\-seed\fR \fI\,SEED\/\fR
+Random seed (default: 0)
+
+.TP
+\fB\-\-backend\fR \fI\,{auto,numpy,cupy}\/\fR
+Computation backend (default: numpy)
+
+.TP
+\fB\-\-batch\-size\fR \fI\,BATCH_SIZE\/\fR
+Batch size for large datasets (default: auto)
+
+.TP
+\fB\-\-use\-cache\fR
+Cache permutation tables to disk
+
+.TP
+\fB\-\-sort\-genes\fR
+Sort genes alphabetically before ridge regression (NOT recommended for R compatibility)
+
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose output
+
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Suppress output
+
+.TP
+\fB\-d\fR, \fB\-\-differential\fR
+Input is already differential expression (log2FC)
+
+.TP
+\fB\-\-sig\-filter\fR
+Filter signatures by available genes
+
+.TP
+\fB\-\-transpose\fR
+Transpose H5AD input (if genes are in obs instead of var)
+
+.SH COMMAND \fI\,'secactpy scrnaseq'\/\fR
+usage: secactpy scrnaseq [\-h] \-i INPUT \-o OUTPUT [\-s {secact,cytosig}]
+                         [\-\-lambda LAMBDA_] [\-n N_RAND] [\-\-seed SEED]
+                         [\-\-backend {auto,numpy,cupy}]
+                         [\-\-batch\-size BATCH_SIZE] [\-\-use\-cache]
+                         [\-\-sort\-genes] [\-v] [\-q] [\-c CELL_TYPE_COL]
+                         [\-\-single\-cell] [\-\-sig\-filter]
+
+Infer secreted protein activity from scRNA\-seq data
+
+.SH OPTIONS \fI\,'secactpy scrnaseq'\/\fR
+.TP
+\fB\-i\fR \fI\,INPUT\/\fR, \fB\-\-input\fR \fI\,INPUT\/\fR
+Input file or directory
+
+.TP
+\fB\-o\fR \fI\,OUTPUT\/\fR, \fB\-\-output\fR \fI\,OUTPUT\/\fR
+Output H5AD file
+
+.TP
+\fB\-s\fR \fI\,{secact,cytosig}\/\fR, \fB\-\-signature\fR \fI\,{secact,cytosig}\/\fR
+Signature matrix (default: secact)
+
+.TP
+\fB\-\-lambda\fR \fI\,LAMBDA_\/\fR
+Ridge regularization parameter (default: 5e5)
+
+.TP
+\fB\-n\fR \fI\,N_RAND\/\fR, \fB\-\-n\-rand\fR \fI\,N_RAND\/\fR
+Number of permutations (default: 1000)
+
+.TP
+\fB\-\-seed\fR \fI\,SEED\/\fR
+Random seed (default: 0)
+
+.TP
+\fB\-\-backend\fR \fI\,{auto,numpy,cupy}\/\fR
+Computation backend (default: numpy)
+
+.TP
+\fB\-\-batch\-size\fR \fI\,BATCH_SIZE\/\fR
+Batch size for large datasets (default: auto)
+
+.TP
+\fB\-\-use\-cache\fR
+Cache permutation tables to disk
+
+.TP
+\fB\-\-sort\-genes\fR
+Sort genes alphabetically before ridge regression (NOT recommended for R compatibility)
+
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose output
+
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Suppress output
+
+.TP
+\fB\-c\fR \fI\,CELL_TYPE_COL\/\fR, \fB\-\-cell\-type\-col\fR \fI\,CELL_TYPE_COL\/\fR
+Column name for cell type annotations
+
+.TP
+\fB\-\-single\-cell\fR
+Compute at single cell level (default: aggregate by cell type)
+
+.TP
+\fB\-\-sig\-filter\fR
+Filter signatures by available genes
+
+.SH COMMAND \fI\,'secactpy visium'\/\fR
+usage: secactpy visium [\-h] \-i INPUT \-o OUTPUT [\-s {secact,cytosig}]
+                       [\-\-lambda LAMBDA_] [\-n N_RAND] [\-\-seed SEED]
+                       [\-\-backend {auto,numpy,cupy}] [\-\-batch\-size BATCH_SIZE]
+                       [\-\-use\-cache] [\-\-sort\-genes] [\-v] [\-q]
+                       [\-c CELL_TYPE_COL] [\-\-spot\-level]
+                       [\-\-min\-genes MIN_GENES] [\-\-scale\-factor SCALE_FACTOR]
+                       [\-\-sig\-filter]
+
+Infer secreted protein activity from Visium data
+
+.SH OPTIONS \fI\,'secactpy visium'\/\fR
+.TP
+\fB\-i\fR \fI\,INPUT\/\fR, \fB\-\-input\fR \fI\,INPUT\/\fR
+Input file or directory
+
+.TP
+\fB\-o\fR \fI\,OUTPUT\/\fR, \fB\-\-output\fR \fI\,OUTPUT\/\fR
+Output H5AD file
+
+.TP
+\fB\-s\fR \fI\,{secact,cytosig}\/\fR, \fB\-\-signature\fR \fI\,{secact,cytosig}\/\fR
+Signature matrix (default: secact)
+
+.TP
+\fB\-\-lambda\fR \fI\,LAMBDA_\/\fR
+Ridge regularization parameter (default: 5e5)
+
+.TP
+\fB\-n\fR \fI\,N_RAND\/\fR, \fB\-\-n\-rand\fR \fI\,N_RAND\/\fR
+Number of permutations (default: 1000)
+
+.TP
+\fB\-\-seed\fR \fI\,SEED\/\fR
+Random seed (default: 0)
+
+.TP
+\fB\-\-backend\fR \fI\,{auto,numpy,cupy}\/\fR
+Computation backend (default: numpy)
+
+.TP
+\fB\-\-batch\-size\fR \fI\,BATCH_SIZE\/\fR
+Batch size for large datasets (default: auto)
+
+.TP
+\fB\-\-use\-cache\fR
+Cache permutation tables to disk
+
+.TP
+\fB\-\-sort\-genes\fR
+Sort genes alphabetically before ridge regression (NOT recommended for R compatibility)
+
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose output
+
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Suppress output
+
+.TP
+\fB\-c\fR \fI\,CELL_TYPE_COL\/\fR, \fB\-\-cell\-type\-col\fR \fI\,CELL_TYPE_COL\/\fR
+Column name for cell type deconvolution results
+
+.TP
+\fB\-\-spot\-level\fR
+Compute at spot level (default: True)
+
+.TP
+\fB\-\-min\-genes\fR \fI\,MIN_GENES\/\fR
+Minimum genes per spot (default: 200)
+
+.TP
+\fB\-\-scale\-factor\fR \fI\,SCALE_FACTOR\/\fR
+Normalization scale factor (default: 1e5)
+
+.TP
+\fB\-\-sig\-filter\fR
+Filter signatures by available genes
+
+.SH COMMAND \fI\,'secactpy cosmx'\/\fR
+usage: secactpy cosmx [\-h] \-i INPUT \-o OUTPUT [\-s {secact,cytosig}]
+                      [\-\-lambda LAMBDA_] [\-n N_RAND] [\-\-seed SEED]
+                      [\-\-backend {auto,numpy,cupy}] [\-\-batch\-size BATCH_SIZE]
+                      [\-\-use\-cache] [\-\-sort\-genes] [\-v] [\-q]
+                      [\-c CELL_TYPE_COL] [\-\-min\-genes MIN_GENES]
+                      [\-\-scale\-factor SCALE_FACTOR] [\-\-sig\-filter]
+                      [\-\-no\-sig\-filter]
+
+Infer secreted protein activity from CosMx data
+
+.SH OPTIONS \fI\,'secactpy cosmx'\/\fR
+.TP
+\fB\-i\fR \fI\,INPUT\/\fR, \fB\-\-input\fR \fI\,INPUT\/\fR
+Input file or directory
+
+.TP
+\fB\-o\fR \fI\,OUTPUT\/\fR, \fB\-\-output\fR \fI\,OUTPUT\/\fR
+Output H5AD file
+
+.TP
+\fB\-s\fR \fI\,{secact,cytosig}\/\fR, \fB\-\-signature\fR \fI\,{secact,cytosig}\/\fR
+Signature matrix (default: secact)
+
+.TP
+\fB\-\-lambda\fR \fI\,LAMBDA_\/\fR
+Ridge regularization parameter (default: 5e5)
+
+.TP
+\fB\-n\fR \fI\,N_RAND\/\fR, \fB\-\-n\-rand\fR \fI\,N_RAND\/\fR
+Number of permutations (default: 1000)
+
+.TP
+\fB\-\-seed\fR \fI\,SEED\/\fR
+Random seed (default: 0)
+
+.TP
+\fB\-\-backend\fR \fI\,{auto,numpy,cupy}\/\fR
+Computation backend (default: numpy)
+
+.TP
+\fB\-\-batch\-size\fR \fI\,BATCH_SIZE\/\fR
+Batch size for large datasets (default: auto)
+
+.TP
+\fB\-\-use\-cache\fR
+Cache permutation tables to disk
+
+.TP
+\fB\-\-sort\-genes\fR
+Sort genes alphabetically before ridge regression (NOT recommended for R compatibility)
+
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose output
+
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Suppress output
+
+.TP
+\fB\-c\fR \fI\,CELL_TYPE_COL\/\fR, \fB\-\-cell\-type\-col\fR \fI\,CELL_TYPE_COL\/\fR
+Column name for cell type annotations
+
+.TP
+\fB\-\-min\-genes\fR \fI\,MIN_GENES\/\fR
+Minimum genes per cell (default: 50)
+
+.TP
+\fB\-\-scale\-factor\fR \fI\,SCALE_FACTOR\/\fR
+Normalization scale factor (default: 1000 for CosMx)
+
+.TP
+\fB\-\-sig\-filter\fR
+Filter signatures by available genes (default: True for CosMx)
+
+.TP
+\fB\-\-no\-sig\-filter\fR
+Disable signature filtering
+
+.SH COMMAND \fI\,'secactpy compare'\/\fR
+usage: secactpy compare [\-h] [\-t TOLERANCE] [\-\-sort] [\-\-by\-position] [\-v]
+                        file1 file2
+
+Compare two H5AD files to validate R vs Python output identity
+
+.TP
+\fBfile1\fR
+First H5AD file (e.g., R output)
+
+.TP
+\fBfile2\fR
+Second H5AD file (e.g., Python output)
+
+.SH OPTIONS \fI\,'secactpy compare'\/\fR
+.TP
+\fB\-t\fR \fI\,TOLERANCE\/\fR, \fB\-\-tolerance\fR \fI\,TOLERANCE\/\fR
+Tolerance for numerical comparison (default: 1e\-10)
+
+.TP
+\fB\-\-sort\fR
+Sort rows/columns before comparison (for different ordering)
+
+.TP
+\fB\-\-by\-position\fR
+Compare by matrix position, ignoring cell/protein names (useful for single\-sample)
+
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose output
+
+.SH COMMAND \fI\,'secactpy convert'\/\fR
+usage: secactpy convert [\-h] \-i INPUT \-o OUTPUT [\-v]
+
+Convert H5AD files written by R to Python/anndata\-compatible format
+
+.SH OPTIONS \fI\,'secactpy convert'\/\fR
+.TP
+\fB\-i\fR \fI\,INPUT\/\fR, \fB\-\-input\fR \fI\,INPUT\/\fR
+Input H5AD file (R format)
+
+.TP
+\fB\-o\fR \fI\,OUTPUT\/\fR, \fB\-\-output\fR \fI\,OUTPUT\/\fR
+Output H5AD file (Python format)
+
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose output
+
+.SH COMMAND \fI\,'secactpy inspect'\/\fR
+usage: secactpy inspect [\-h] \-i INPUT [\-v]
+
+Show the internal structure of an H5AD file for debugging
+
+.SH OPTIONS \fI\,'secactpy inspect'\/\fR
+.TP
+\fB\-i\fR \fI\,INPUT\/\fR, \fB\-\-input\fR \fI\,INPUT\/\fR
+Input H5AD file to inspect
+
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Show nested structure details
+
+.SH COMMENTS
+Examples:
+  # Bulk RNA\-seq (differential expression)
+  secactpy bulk \-i diff_expr.tsv \-o results.h5ad \-\-differential \-v
+
+  # Bulk RNA\-seq (raw counts, compute differential vs mean)
+  secactpy bulk \-i counts.tsv \-o results.h5ad \-v
+
+  # scRNA\-seq with cell type aggregation
+  secactpy scrnaseq \-i data.h5ad \-o results.h5ad \-\-cell\-type\-col celltype \-v
+
+  # scRNA\-seq at single cell level
+  secactpy scrnaseq \-i data.h5ad \-o results.h5ad \-\-single\-cell \-v
+
+  # Visium spatial transcriptomics (10x format)
+  secactpy visium \-i /path/to/visium/ \-o results.h5ad \-v
+
+  # Visium with cell type deconvolution
+  secactpy visium \-i data.h5ad \-o results.h5ad \-\-cell\-type\-col cell_type \-v
+
+  # CosMx (single\-cell spatial)
+  secactpy cosmx \-i cosmx.h5ad \-o results.h5ad \-\-batch\-size 50000 \-v
+
+  # Use GPU acceleration
+  secactpy bulk \-i data.tsv \-o results.h5ad \-\-backend cupy \-v
+
+  # Use CytoSig signature
+  secactpy bulk \-i data.tsv \-o results.h5ad \-\-signature cytosig \-v
+
+  # Compare R and Python outputs
+  secactpy compare r_output.h5ad python_output.h5ad \-t 1e\-10
+
+  # Compare with different index ordering
+  secactpy compare file1.h5ad file2.h5ad \-\-sort \-v
+
+  # Convert R\-format H5AD to Python\-compatible format
+  secactpy convert \-i r_output.h5ad \-o python_compatible.h5ad
+
+  # Inspect H5AD file structure (for debugging)
+  secactpy inspect \-i file.h5ad \-v
+
+For more information, visit: https://github.com/data2intelligence/SecActpy
+        
+
+.SH AUTHOR
+.nf
+Seongyong Park
+.fi

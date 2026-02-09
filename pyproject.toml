@@ -60,10 +60,15 @@ dev = [
     "black>=23.0.0",
     "ruff>=0.1.0",
 ]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.0.0",
+    "argparse-manpage",
+]
 
 [project.urls]
 Homepage = "https://github.com/data2intelligence/SecActpy"
-Documentation = "https://github.com/data2intelligence/SecActpy#readme"
+Documentation = "https://data2intelligence.github.io/SecActpy/"
 Repository = "https://github.com/data2intelligence/SecActpy"
 Issues = "https://github.com/data2intelligence/SecActpy/issues"
 "Original R Package" = "https://github.com/data2intelligence/SecAct"
@@ -80,6 +85,9 @@ include-package-data = true
 
 [tool.setuptools.exclude-package-data]
 "secactpy.data" = ["LinCytoSig.tsv.gz"]
+
+[tool.setuptools.data-files]
+"share/man/man1" = ["man/secactpy.1"]
 
 [tool.black]
 line-length = 100
