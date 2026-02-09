@@ -28,15 +28,44 @@ How normalization is handled depends on the input format:
 ## Column normalization flags for sparse Y
 
 When Y is sparse, the `col_center` and `col_scale` parameters control
-in-flight normalization. For each output element (i, j), where μⱼ and σⱼ
-are the mean and standard deviation of column j of Y:
+in-flight normalization.
 
-| `col_center` | `col_scale` | Element (i, j) formula | Description |
-|---|---|---|---|
-| `True` | `True` | `Σₖ Tᵢₖ(Yₖⱼ − μⱼ) / σⱼ` | Full z-scoring (default) |
-| `True` | `False` | `Σₖ Tᵢₖ(Yₖⱼ − μⱼ)` | Mean-center only |
-| `False` | `True` | `Σₖ Tᵢₖ Yₖⱼ / σⱼ` | Scale only |
-| `False` | `False` | `Σₖ Tᵢₖ Yₖⱼ` | Raw projection |
+**Notation:**
+
+| Symbol | Shape | Definition |
+|--------|-------|------------|
+| T | (m, p) | Projection matrix: `(X'X + λI)⁻¹ X'`, where X is the signature matrix |
+| Y | (p, n) | Expression matrix (genes × samples), sparse |
+| Tᵢₖ | scalar | Element at row i, column k of T |
+| Yₖⱼ | scalar | Element at row k, column j of Y |
+| μⱼ | scalar | Mean of column j of Y: `μⱼ = (1/p) Σₖ Yₖⱼ` |
+| σⱼ | scalar | Standard deviation of column j of Y |
+| μ | (n,) | Vector of all column means |
+| σ | (n,) | Vector of all column stds |
+| Σₖ | — | Summation over k = 1, …, p (gene axis) |
+
+**Formulas:**
+
+| `col_center` | `col_scale` | Element (i, j) formula | Python (vectorized) | Description |
+|---|---|---|---|---|
+| `True` | `True` | `Σₖ Tᵢₖ(Yₖⱼ − μⱼ) / σⱼ` | `(T @ Y - T.sum(1)[:, None] * μ) / σ` | Full z-scoring (default) |
+| `True` | `False` | `Σₖ Tᵢₖ(Yₖⱼ − μⱼ)` | `T @ Y - T.sum(1)[:, None] * μ` | Mean-center only |
+| `False` | `True` | `Σₖ Tᵢₖ Yₖⱼ / σⱼ` | `T @ Y / σ` | Scale only |
+| `False` | `False` | `Σₖ Tᵢₖ Yₖⱼ` | `T @ Y` | Raw projection |
+
+**Broadcasting:** `μ` and `σ` are 1-D vectors of length n (one value per
+column of Y). `T @ Y` produces an (m × n) matrix and the vector operations
+broadcast across it:
+
+- **`/ σ`** — `σ` has shape `(n,)`. NumPy broadcasts it as a row vector,
+  dividing each column j of the matrix by `σⱼ`. This scales every element
+  in column j by the same scalar.
+- **`* μ`** — same broadcasting: `μ` has shape `(n,)` and multiplies each
+  column j by `μⱼ`.
+- **`T.sum(1)[:, None]`** — row sums of T, shape `(m, 1)`. The `[:, None]`
+  reshapes it into a column vector so that `T.sum(1)[:, None] * μ` produces
+  an (m × n) outer product, where element (i, j) equals `(Σₖ Tᵢₖ) · μⱼ`.
+  This is the centering correction term subtracted from `T @ Y`.
 
 These flags work with both `ridge()` and `ridge_batch()`, and with both
 `sparse_mode=True` and `sparse_mode=False`.
