@@ -11,13 +11,13 @@
 Python implementation of [SecAct](https://github.com/data2intelligence/SecAct) for inferring secreted protein activities from gene expression data.
 
 **Key Features:**
-- 🎯 **SecAct Compatible**: Matches R SecAct/RidgeR results on the same platform (`rng_method='srand'`)
-- 🚀 **GPU Acceleration**: Optional CuPy backend for large-scale analysis
-- 📊 **Million-Sample Scale**: Batch processing with streaming output for massive datasets
-- 🔬 **Built-in Signatures**: Includes SecAct and CytoSig signature matrices
-- 🧬 **Multi-Platform Support**: Bulk RNA-seq, scRNA-seq, and Spatial Transcriptomics (Visium, CosMx)
-- 💾 **Smart Caching**: Optional permutation table caching for faster repeated analyses
-- 🧮 **Sparse-Aware**: Automatic memory-efficient processing for sparse single-cell data
+- **SecAct Compatible**: Matches R SecAct/RidgeR results on the same platform (`rng_method='srand'`)
+- **GPU Acceleration**: Optional CuPy backend for large-scale analysis
+- **Million-Sample Scale**: Batch processing with streaming output for massive datasets
+- **Built-in Signatures**: Includes SecAct and CytoSig signature matrices
+- **Multi-Platform Support**: Bulk RNA-seq, scRNA-seq, and Spatial Transcriptomics (Visium, CosMx)
+- **Smart Caching**: Optional permutation table caching for faster repeated analyses
+- **Sparse-Aware**: Automatic memory-efficient processing for sparse single-cell data
 
 ## Installation
 
@@ -56,12 +56,6 @@ pip install "secactpy[gpu] @ git+https://github.com/data2intelligence/SecActpy.g
 pip install git+https://github.com/data2intelligence/SecActpy.git
 pip install cupy-cuda12x
 ```
-
-> **Important (CUDA 12.x users)**: Do **not** use the `[gpu]` extra on CUDA 12.x systems — it installs `cupy-cuda11x`, which conflicts with `cupy-cuda12x`. If you already installed with `[gpu]`, remove the conflicting package first:
-> ```bash
-> pip uninstall cupy-cuda11x
-> pip install cupy-cuda12x
-> ```
 
 ### Development Installation
 
@@ -200,248 +194,34 @@ result = secact_activity_inference_st(
 activity = result['zscore']  # (proteins × cell_types)
 ```
 
-### Large-Scale Batch Processing
+## Batch Processing
 
-#### What is batch processing?
-
-By default, SecActPy loads the entire expression matrix into memory and runs
-ridge regression on all samples at once. This works well for most datasets, but
-for large-scale analyses (e.g., 50,000+ single cells or spatial spots) the
-memory required for permutation testing can exceed available RAM or GPU memory.
-
-Batch processing splits the work into smaller pieces. The expensive projection
-matrix `T = (X'X + λI)^{-1} X'` is computed **once** from the signature, then
-samples are processed in chunks of `batch_size` at a time. Each chunk goes
-through the full permutation-testing pipeline independently, and partial results
-are concatenated at the end. **The final output is mathematically identical** to
-processing all samples at once — only peak memory usage is reduced.
-
-All three high-level functions support `batch_size` and `output_path`:
-- `secact_activity_inference()` — bulk RNA-seq
-- `secact_activity_inference_scrnaseq()` — scRNA-seq
-- `secact_activity_inference_st()` — spatial transcriptomics
-
-Set `batch_size` to enable it:
+For large datasets (50,000+ samples), batch processing splits computation into
+memory-efficient chunks while producing **mathematically identical** results.
+The projection matrix is computed once, then samples are processed in chunks.
+Set `batch_size` on any high-level function:
 
 ```python
-# Without batch processing: all samples at once (default)
-result = secact_activity_inference(expr_df, ...)
-
-# With batch processing: 5000 samples per chunk
 result = secact_activity_inference(expr_df, ..., batch_size=5000)
-
-# Works the same way for scRNA-seq and ST:
 result = secact_activity_inference_scrnaseq(adata, ..., batch_size=5000)
 result = secact_activity_inference_st(adata, ..., batch_size=5000)
 ```
-
-#### In-memory vs streaming output
-
-By default, batch results are accumulated in memory and returned as a dictionary
-of DataFrames — this is the **in-memory** mode. You get back a `dict` with
-`result['zscore']`, `result['pvalue']`, etc., just like the non-batched case.
-
-For very large datasets, even the **output** matrices (beta, zscore, pvalue,
-se — each of shape n_proteins × n_samples) may not fit in memory. **Streaming
-output** solves this: set `output_path` to write each batch's results directly
-to an HDF5 file on disk as it completes. The function returns `None` in this
-mode — no results are held in memory. You load them back from the file when
-needed. All three high-level functions support this.
 
 | Mode | Parameter | Return value | Memory for output |
 |------|-----------|--------------|-------------------|
 | In-memory (default) | `output_path=None` | `dict` of DataFrames | All results in RAM |
 | Streaming | `output_path="results.h5ad"` | `None` | Only one batch at a time |
 
-```python
-# Streaming works with any high-level function:
-secact_activity_inference(..., batch_size=5000, output_path="bulk_results.h5ad")
-secact_activity_inference_scrnaseq(..., batch_size=5000, output_path="sc_results.h5ad")
-secact_activity_inference_st(..., batch_size=5000, output_path="st_results.h5ad")
-```
+Setting `sparse_mode=True` keeps sparse Y matrices in sparse format end-to-end,
+avoiding densification and reducing memory by orders of magnitude for highly
+sparse single-cell data (<5% density: ~1.8x faster; results identical).
 
-#### Example: batch processing with `secact_activity_inference`
-
-`secact_activity_inference` handles gene subsetting, z-score normalization,
-signature grouping, and row expansion automatically — you just pass your
-expression data and set `batch_size`.
-
-```bash
-# Download example data (788 OV CD4 T cells, 34 MB)
-wget https://zenodo.org/records/18520356/files/OV_scRNAseq_CD4.h5ad
-```
-
-```python
-from secactpy import secact_activity_inference
-import anndata as ad
-
-# Load multi-sample expression data
-adata = ad.read_h5ad("OV_scRNAseq_CD4.h5ad")
-
-# --- In-memory mode (default) ---
-# Results are returned as a dict of DataFrames
-result = secact_activity_inference(
-    adata.to_df().T,         # genes × cells DataFrame
-    is_differential=False,   # center by row means across samples
-    batch_size=200,          # process 200 cells per batch
-    verbose=True
-)
-print(result['zscore'].head())  # (proteins × cells) DataFrame
-
-# --- Streaming mode ---
-# Results are written to disk; function returns None
-secact_activity_inference(
-    adata.to_df().T,
-    is_differential=False,
-    batch_size=200,
-    output_path="results.h5ad",       # write here instead of returning
-    output_compression="gzip",        # compress on disk (default)
-    verbose=True
-)
-# Load results back when needed:
-import h5py
-with h5py.File("results.h5ad", "r") as f:
-    zscore = f['zscore'][:]           # NumPy array (proteins × cells)
-```
-
-#### Sparse mode for memory-efficient processing
-
-By default, sparse Y matrices are converted to dense before matrix
-multiplication. For very large, highly sparse datasets (e.g., scRNA-seq with
-100k+ cells at <5% density), this can require hundreds of GB of RAM.
-
-Setting `sparse_mode=True` keeps Y sparse throughout the entire pipeline.
-Instead of densifying Y and computing `T @ Y_dense`, it uses the algebraic
-identity `(Y.T @ T.T).T` to perform the multiplication with Y in sparse format.
-Column z-scoring and row-mean centering are applied as lightweight corrections
-on the small output matrix, never on Y itself.
-
-All three high-level functions support `sparse_mode`:
-
-```python
-# scRNA-seq: sparse CPM → log2 → ridge, Y never densified
-result = secact_activity_inference_scrnaseq(
-    adata,
-    cell_type_col="cell_type",
-    is_single_cell_level=True,
-    batch_size=5000,
-    sparse_mode=True,   # keep Y sparse end-to-end
-    verbose=True
-)
-
-# Spatial transcriptomics: same sparse pipeline
-result = secact_activity_inference_st(
-    adata,
-    batch_size=5000,
-    sparse_mode=True,
-    verbose=True
-)
-```
-
-When `sparse_mode=True`, the scrnaseq and ST functions bypass the standard
-dense normalization pipeline. CPM normalization and log2 transform are applied
-directly on the sparse matrix (both are zero-preserving), and row-mean
-centering + column z-scoring are handled in-flight by `ridge_batch`.
-
-| | Default (`sparse_mode=False`) | `sparse_mode=True` |
-|---|---|---|
-| Memory | Allocates full dense Y | Y stays sparse |
-| Speed (<5% density) | Baseline | ~1.8x faster |
-| Speed (5-10% density) | Baseline | ~25% slower |
-| Results | Identical | Identical |
-
-#### Advanced: Low-Level `ridge` and `ridge_batch`
-
-The high-level functions handle gene subsetting, scaling, centering, and
-streaming output automatically. If you need more control — for example, to
-pass a pre-processed sparse matrix directly — use the low-level functions:
-
-| Function | Input | Best for |
-|----------|-------|----------|
-| `ridge()` | Dense or sparse Y (fits in memory) | Small-to-medium datasets, single-call |
-| `ridge_batch()` | Dense or sparse Y (any size) | Large datasets, streaming output |
-
-Both functions support the same `backend` options (`'numpy'`, `'cupy'`,
-`'auto'`), `sparse_mode`, `col_center`, `col_scale`, and produce identical
-results for the same inputs.
-
-**Dense vs sparse inputs.** How normalization is handled depends on the
-input format:
-
-- **Dense (NumPy array):** You must z-score normalize Y yourself before
-  calling, since neither `ridge()` nor `ridge_batch()` scans the full dense
-  array upfront. The `col_center`/`col_scale` flags are ignored.
-- **Sparse (`scipy.sparse` matrix):** Column statistics are computed
-  efficiently from the sparse structure, then normalization is applied
-  in-flight. Use `col_center` and `col_scale` to control which normalization
-  steps are applied (both default to `True`).
-
-**Column normalization flags for sparse Y.** When Y is sparse, the
-`col_center` and `col_scale` parameters control in-flight normalization:
-
-| `col_center` | `col_scale` | Formula | Description |
-|---|---|---|---|
-| `True` | `True` | `(T @ Y) / σ - c ⊗ (μ/σ)` | Full z-scoring (default) |
-| `True` | `False` | `T @ Y - c ⊗ μ` | Mean-center only |
-| `False` | `True` | `(T @ Y) / σ` | Scale only |
-| `False` | `False` | `T @ Y` | Raw projection |
-
-These flags work with both `ridge()` and `ridge_batch()`, and with both
-`sparse_mode=True` and `sparse_mode=False`.
-
-```python
-from secactpy import ridge, ridge_batch
-
-# --- ridge() with sparse Y ---
-# Full in-flight z-scoring (matches pre-scaled dense input)
-result = ridge(X, Y_sparse, sparse_mode=True)
-
-# Raw projection without normalization
-result = ridge(X, Y_sparse, sparse_mode=True,
-               col_center=False, col_scale=False)
-
-# --- ridge_batch() with sparse Y ---
-# Sparse end-to-end with in-flight normalization and row centering
-result = ridge_batch(
-    X, Y_sparse,
-    batch_size=5000,
-    sparse_mode=True,    # keep Y sparse during T @ Y
-    row_center=True,     # apply row-mean centering in-flight
-    col_center=True,     # subtract column means (default)
-    col_scale=True       # divide by column stds (default)
-)
-
-# Raw sparse projection (no column normalization)
-result = ridge_batch(
-    X, Y_sparse,
-    batch_size=5000,
-    col_center=False, col_scale=False
-)
-```
-
-**If you do not want automatic sparse scaling**, you can either set
-`col_center=False, col_scale=False`, or convert to dense and normalize
-however you like:
-
-```python
-from secactpy import ridge_batch
-
-# Option 1: Disable in-flight normalization
-result = ridge_batch(X, Y_sparse, batch_size=5000,
-                     col_center=False, col_scale=False)
-
-# Option 2: Convert to dense, apply your own processing
-Y_dense = Y_sparse.toarray().astype(np.float64)
-# ... apply your own normalization (or skip it) ...
-result = ridge_batch(X, Y_dense, batch_size=5000)
-```
+See [Batch Processing](docs/batch_processing.md) for worked examples and
+streaming output details.
 
 ## API Reference
 
 ### High-Level Functions
-
-All three inference functions support `batch_size`, `output_path`, and
-`output_compression` for large-scale and streaming workflows.
 
 | Function | Description |
 |----------|-------------|
@@ -485,13 +265,14 @@ All three inference functions support `batch_size`, `output_path`, and
 
 ### Batch Processing Parameters
 
-Supported by all three high-level inference functions and `ridge_batch()`.
-
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `batch_size` | `None` | Samples per batch (`None` = all at once) |
 | `output_path` | `None` | Stream results to H5AD file (requires `batch_size`) |
 | `output_compression` | `"gzip"` | Compression: "gzip", "lzf", or None |
+
+For low-level `ridge()` / `ridge_batch()` usage and sparse column normalization
+details, see [Advanced API](docs/advanced_api.md).
 
 ## GPU Acceleration
 
@@ -499,96 +280,51 @@ Supported by all three high-level inference functions and `ridge_batch()`.
 from secactpy import secact_activity_inference, CUPY_AVAILABLE
 
 print(f"GPU available: {CUPY_AVAILABLE}")
-
-# Auto-detect GPU
 result = secact_activity_inference(expression, backend='auto')
-
-# Force GPU
-result = secact_activity_inference(expression, backend='cupy')
 ```
 
-### Performance
+| Dataset | Py (CPU) | Py (GPU) | Speedup |
+|---------|----------|----------|---------|
+| Bulk (1,170 sp × 1,000 samples) | 128.8s | 6.7s | 11–19x |
+| scRNA-seq (1,170 sp × 788 cells) | 104.8s | 6.8s | 8–15x |
+| Visium (1,170 sp × 3,404 spots) | 381.4s | 11.2s | 13–34x |
+| CosMx (151 sp × 443,515 cells) | 1226.7s | 99.9s | 9–12x |
 
-| Dataset | R (Mac M1) | R (Linux) | Py (CPU) | Py (GPU) | Speedup |
-|---------|------------|-----------|----------|----------|---------|
-| Bulk (1,170 sp × 1,000 samples) | 74.4s | 141.6s | 128.8s | 6.7s | 11–19x |
-| scRNA-seq (1,170 sp × 788 cells) | 54.9s | 117.4s | 104.8s | 6.8s | 8–15x |
-| Visium (1,170 sp × 3,404 spots) | 141.7s | 379.8s | 381.4s | 11.2s | 13–34x |
-| CosMx (151 sp × 443,515 cells) | 936.9s | 976.1s | 1226.7s | 99.9s | 9–12x |
-
-<details>
-<summary>Benchmark Environment</summary>
-
-- **Mac CPU**: M1 Pro with VECLIB (8 cores)
-- **Linux CPU**: AMD EPYC 7543P (4 cores)
-- **Linux GPU**: NVIDIA A100-SXM4-80GB
-
-</details>
+See [GPU Acceleration](docs/gpu_acceleration.md) for full benchmarks and CUDA setup.
 
 ## Command Line Interface
 
-SecActPy provides a command line interface for common workflows:
-
 ```bash
-# Bulk RNA-seq (differential expression)
 secactpy bulk -i diff_expr.tsv -o results.h5ad --differential -v
-
-# Bulk RNA-seq (raw counts)
-secactpy bulk -i counts.tsv -o results.h5ad -v
-
-# scRNA-seq with cell type aggregation
 secactpy scrnaseq -i data.h5ad -o results.h5ad --cell-type-col celltype -v
-
-# scRNA-seq at single cell level
-secactpy scrnaseq -i data.h5ad -o results.h5ad --single-cell -v
-
-# Visium spatial transcriptomics
 secactpy visium -i /path/to/visium/ -o results.h5ad -v
-
-# CosMx (single-cell spatial)
 secactpy cosmx -i cosmx.h5ad -o results.h5ad --batch-size 50000 -v
-
-# Use GPU acceleration
-secactpy bulk -i data.tsv -o results.h5ad --backend cupy -v
-
-# Use CytoSig signature
-secactpy bulk -i data.tsv -o results.h5ad --signature cytosig -v
 ```
-
-### CLI Options
 
 | Option | Description |
 |--------|-------------|
 | `-i, --input` | Input file or directory |
 | `-o, --output` | Output H5AD file |
 | `-s, --signature` | Signature matrix (secact, cytosig) |
-| `--lambda` | Ridge regularization (default: 5e5) |
-| `-n, --n-rand` | Number of permutations (default: 1000) |
 | `--backend` | Computation backend (auto, numpy, cupy) |
 | `--batch-size` | Batch size for large datasets |
 | `-v, --verbose` | Verbose output |
 
+See [CLI Reference](docs/cli.md) for all commands and options.
+
 ## Docker
 
-Pre-built Docker images are available:
-
 ```bash
-# CPU version
-docker pull psychemistz/secactpy:latest
-
-# GPU version
-docker pull psychemistz/secactpy:gpu
-
-# With R SecAct/RidgeR for cross-validation
-docker pull psychemistz/secactpy:with-r
+docker pull psychemistz/secactpy:latest      # CPU
+docker pull psychemistz/secactpy:gpu          # GPU
+docker pull psychemistz/secactpy:with-r       # With R SecAct/RidgeR
 ```
 
 See [DOCKER.md](DOCKER.md) for detailed usage instructions.
 
 ## Reproducibility
 
-SecActPy supports three RNG backends via the `rng_method` parameter, each
-offering different trade-offs between R compatibility and performance:
+SecActPy supports three RNG backends for different reproducibility needs:
 
 | `rng_method` | Description | Use case |
 |---|---|---|
@@ -596,49 +332,18 @@ offering different trade-offs between R compatibility and performance:
 | `'gsl'` | Mersenne Twister (GSL-compatible) | **Cross-platform** reproducibility within SecActPy |
 | `'numpy'` | Native NumPy RNG (~70x faster) | Fast analysis when reproducibility with R is not needed |
 
-### Matching R SecAct/RidgeR output
-
-To reproduce R SecAct/RidgeR results on the same machine, use `rng_method='srand'`.
-This uses the C standard library's `rand()` function, which matches R's internal
-RNG on the same platform. Note that C `rand()` implementations differ across
-operating systems, so results are platform-dependent.
-
 ```python
-result = secact_activity_inference(
-    expression,
-    is_differential=True,
-    sig_matrix="secact",
-    lambda_=5e5,
-    n_rand=1000,
-    seed=0,
-    rng_method="srand",  # Match R SecAct on same platform
-)
+# Match R SecAct on same platform
+result = secact_activity_inference(expr, rng_method="srand")
+
+# Cross-platform reproducible (default)
+result = secact_activity_inference(expr, rng_method="gsl")
+
+# Fastest (~70x faster permutations)
+result = secact_activity_inference(expr, rng_method="numpy")
 ```
 
-### Cross-platform reproducibility (default)
-
-The default RNG (`rng_method='gsl'`) uses a portable Mersenne Twister
-implementation that produces identical results across all platforms (Linux,
-macOS, Windows). This does **not** match R output, but guarantees consistent
-SecActPy results everywhere.
-
-```python
-result = secact_activity_inference(
-    expression,
-    rng_method="gsl",  # Cross-platform reproducible (default)
-)
-```
-
-### Fastest analysis
-
-For maximum throughput when reproducibility is not required:
-
-```python
-result = secact_activity_inference(
-    expression,
-    rng_method="numpy",  # ~70x faster permutation generation
-)
-```
+See [Reproducibility](docs/reproducibility.md) for detailed examples.
 
 ## Requirements
 
@@ -656,7 +361,7 @@ result = secact_activity_inference(
 
 If you use SecActPy in your research, please cite:
 
-> Beibei Ru, Lanqi Gong, Emily Yang, Seongyong Park, George Zaki, Kenneth Aldape, Lalage Wakefield, Peng Jiang. 
+> Beibei Ru, Lanqi Gong, Emily Yang, Seongyong Park, George Zaki, Kenneth Aldape, Lalage Wakefield, Peng Jiang.
 > **Inference of secreted protein activities in intercellular communication.**
 > [GitHub: data2intelligence/SecAct](https://github.com/data2intelligence/SecAct)
 
@@ -673,44 +378,11 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Changelog
 
+See [CHANGELOG.md](CHANGELOG.md) for full version history.
+
 ### v0.2.4
-- `col_center` and `col_scale` parameters for `ridge()` and `ridge_batch()`:
-  independently control column mean subtraction and column std scaling during
-  in-flight normalization of sparse Y (both default to `True`)
-- `ridge()` sparse path now supports in-flight column normalization (matching
-  `ridge_batch()` behavior)
+- `col_center` and `col_scale` parameters for independent control of sparse in-flight normalization
 
 ### v0.2.3
-- `rng_method` parameter for explicit RNG selection: `'srand'` (match R SecAct), `'gsl'` (cross-platform), `'numpy'` (fast)
-- `is_group_sig=True` by default: groups correlated signatures to reduce redundancy
-- Updated SecAct signature matrix with consolidated signatures
-
-### v0.2.2
-- **Fix**: `ImportError` when using `batch_size` with `secact_activity_inference()` or `secact_activity_inference_st()`
-- `sparse_mode=True` for memory-efficient processing of sparse Y matrices
-- End-to-end sparse pipeline in scrnaseq/ST: sparse CPM, log2, and in-flight
-  row-mean centering + column z-scoring without densification
-- `row_center=True` in `ridge_batch()` for in-flight row-mean centering
-
-### v0.2.1
-- Streaming output (`output_path`) support in all high-level inference functions
-- `use_gsl_rng` support in `ridge_batch()` for ~70x faster permutation generation
-- Fixed `use_gsl_rng` being silently ignored in batch processing
-- Expanded batch processing documentation with examples and downloadable data
-
-### v0.2.0 (Official Release)
-- Official release under data2intelligence organization
-- PyPI package available (`pip install secactpy`)
-- Comprehensive test suite and CI/CD pipeline
-- Docker images with GPU and R support
-
-### v0.1.2 (Initial Development)
-- Ridge regression with permutation-based significance testing
-- GPU acceleration via CuPy backend (9–34x speedup)
-- Batch processing with streaming H5AD output for million-sample datasets
-- Automatic sparse matrix handling in `ridge_batch()`
-- Built-in SecAct and CytoSig signature matrices
-- GSL-compatible RNG for R/RidgeR reproducibility
-- Support for Bulk RNA-seq, scRNA-seq, and Spatial Transcriptomics
-- Cell type resolution for ST data (`cell_type_col`, `is_spot_level`)
-- Optional permutation table caching (`use_cache`)
+- `rng_method` parameter for explicit RNG selection
+- `is_group_sig=True` by default
