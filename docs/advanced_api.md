@@ -49,8 +49,8 @@ in-flight normalization.
 | `col_center` | `col_scale` | Element (i, j) formula | Python (vectorized) | Description |
 |---|---|---|---|---|
 | `True` | `True` | `Σₖ Tᵢₖ(Yₖⱼ − μⱼ) / σⱼ` | `(T @ Y - T.sum(1)[:, None] * μ) / σ` | Full z-scoring (default) |
-| `True` | `False` | `Σₖ Tᵢₖ(Yₖⱼ − μⱼ)` | `T @ Y - T.sum(1)[:, None] * μ` | Column mean-center only |
-| `False` | `True` | `Σₖ Tᵢₖ Yₖⱼ / σⱼ` | `T @ Y / σ` | Column scale only |
+| `True` | `False` | `Σₖ Tᵢₖ(Yₖⱼ − μⱼ)` | `T @ Y - T.sum(1)[:, None] * μ` | Mean-center only |
+| `False` | `True` | `Σₖ Tᵢₖ Yₖⱼ / σⱼ` | `T @ Y / σ` | Scale only |
 | `False` | `False` | `Σₖ Tᵢₖ Yₖⱼ` | `T @ Y` | Raw projection |
 
 **Broadcasting:** `μ` and `σ` are 1-D vectors of length n (one value per
