@@ -46,6 +46,21 @@ __all__ = [
 ]
 
 
+def _resolve_gene_names(var_names, var_df, verbose=False):
+    """Resolve gene names from AnnData, preferring gene symbols over Ensembl IDs."""
+    names = list(var_names)
+    # Check if var_names look like Ensembl IDs
+    n_ensembl = sum(1 for g in names if g.startswith(('ENSG', 'ENSMUSG')))
+    if n_ensembl > len(names) * 0.5 and var_df is not None:
+        for col in ('gene_name', 'feature_name', 'gene_symbol'):
+            if col in var_df.columns:
+                resolved = list(var_df[col])
+                if verbose:
+                    print(f"  Resolved Ensembl IDs to gene symbols using adata.var['{col}']")
+                return resolved
+    return names
+
+
 # =============================================================================
 # Data Loading Functions
 # =============================================================================
@@ -1404,13 +1419,13 @@ def secact_activity_inference_scrnaseq(
     
     if adata.raw is not None:
         counts_raw = adata.raw.X
-        gene_names = list(adata.raw.var_names)
+        gene_names = _resolve_gene_names(adata.raw.var_names, adata.raw.var, verbose=verbose)
         if verbose:
             print(f"  Using raw counts: {counts_raw.shape} (cells × genes)")
     else:
         counts_raw = adata.X
-        gene_names = list(adata.var_names)
-        
+        gene_names = _resolve_gene_names(adata.var_names, adata.var, verbose=verbose)
+
         # Check if data looks like counts or is already normalized
         if hasattr(counts_raw, 'toarray'):
             sample_data = counts_raw[:min(1000, counts_raw.shape[0]), :min(100, counts_raw.shape[1])].toarray()
@@ -1610,7 +1625,7 @@ def secact_activity_inference_scrnaseq(
                 output_compression=output_compression,
                 feature_names=X_scaled.columns.tolist(),
                 sample_names=cell_names,
-                sparse_mode=True,
+                sparse_mode=False,
                 row_center=True,
                 verbose=verbose
             )
@@ -2054,7 +2069,7 @@ def secact_activity_inference_st(
                     counts = input_data.X.T.tocsr()  # Transpose to (genes × spots)
                 else:
                     counts = input_data.X.T
-                gene_names = list(input_data.var_names)
+                gene_names = _resolve_gene_names(input_data.var_names, input_data.var, verbose=verbose)
                 spot_names = list(input_data.obs_names)
                 adata_obs = input_data.obs
         except Exception:
@@ -2166,7 +2181,7 @@ def secact_activity_inference_st(
             output_compression=output_compression,
             feature_names=X_scaled.columns.tolist(),
             sample_names=spot_names,
-            sparse_mode=True,
+            sparse_mode=False,
             row_center=True,
             verbose=verbose
         )
