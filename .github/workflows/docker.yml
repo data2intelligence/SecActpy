@@ -154,6 +154,10 @@ jobs:
   # ===========================================================================
   # CPU + R Image (Python + R SecAct/RidgeR/SpaCET)
   # Only builds on release or manual trigger with build_r=true
+  # Split into parallel per-platform jobs to avoid timeout: arm64 R builds
+  # run under QEMU emulation and compile packages from source (no RSPM
+  # binaries for arm64), so a single sequential multi-platform build
+  # exceeds the GitHub Actions timeout.
   # ===========================================================================
   build-cpu-r:
     runs-on: ubuntu-latest
@@ -161,6 +165,12 @@ jobs:
     if: |
       needs.check-secrets.outputs.has-secrets == 'true' &&
       (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.build_r == 'true'))
+    strategy:
+      fail-fast: true
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
     steps:
       - name: Free disk space
         run: |
@@ -174,6 +184,13 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Prepare platform pair
+        id: platform
+        run: |
+          echo "pair=${platform//\//-}" >> $GITHUB_OUTPUT
+        env:
+          platform: ${{ matrix.platform }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -193,24 +210,78 @@ jobs:
           VERSION=$(grep 'version = ' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Build and push CPU+R image
+      - name: Build and push CPU+R image by digest
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           build-args: |
             USE_GPU=false
             INSTALL_R=true
             GITHUB_PAT=${{ github.token }}
-          tags: |
-            ${{ env.DOCKERHUB_REPO }}:with-r
-            ${{ env.DOCKERHUB_REPO }}:cpu-with-r
-            ${{ env.DOCKERHUB_REPO }}:${{ steps.version.outputs.version }}-with-r
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-        timeout-minutes: 120  # R builds take longer
+          cache-from: type=gha,scope=cpu-r-${{ steps.platform.outputs.pair }}
+          cache-to: type=gha,mode=max,scope=cpu-r-${{ steps.platform.outputs.pair }}
+          outputs: type=image,name=${{ env.DOCKERHUB_REPO }},push-by-digest=true,name-canonical=true,push=true
+        timeout-minutes: 180
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpu-r-digests-${{ steps.platform.outputs.pair }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Merge per-platform CPU+R digests into a multi-arch manifest
+  merge-cpu-r:
+    runs-on: ubuntu-latest
+    needs: [build-cpu-r]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep 'version = ' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: cpu-r-digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            -t ${{ env.DOCKERHUB_REPO }}:with-r \
+            -t ${{ env.DOCKERHUB_REPO }}:cpu-with-r \
+            -t ${{ env.DOCKERHUB_REPO }}:${{ steps.version.outputs.version }}-with-r \
+            $(printf '${{ env.DOCKERHUB_REPO }}@sha256:%s ' *)
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ${{ env.DOCKERHUB_REPO }}:with-r
 
   # ===========================================================================
   # GPU + R Image (Python + CuPy + R SecAct/RidgeR/SpaCET) - amd64 only
