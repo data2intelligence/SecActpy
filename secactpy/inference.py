@@ -453,9 +453,20 @@ def secact_activity(
         Use GSL-compatible RNG for exact R/RidgeR reproducibility.
         Set to False for faster inference (~70x faster permutation generation)
         when exact R matching is not needed.
+        Ignored when ``rng_method`` is set.
+    rng_method : {"srand", "gsl", "numpy", None}, default=None
+        Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
+
+        - ``"srand"``: C stdlib srand/rand (matches R's RidgeR behavior)
+        - ``"gsl"``: GSL random number generator
+        - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
+        - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility
     use_cache : bool, default=False
         Cache permutation tables to disk for reuse. Enable when running
         multiple analyses with the same gene count for faster repeated runs.
+    batch_size : int, optional
+        Number of samples per batch. When set, samples are processed in
+        batches to reduce peak memory usage.
     sparse_mode : bool, default=False
         When True and Y is a sparse matrix, avoid densifying Y during
         computation. More memory-efficient for very sparse data (<5% density).
@@ -1383,8 +1394,20 @@ def secact_activity_inference_scrnaseq(
     use_gsl_rng : bool, default=True
         Use GSL-compatible RNG for exact R/RidgeR reproducibility.
         Set to False for faster inference when R matching is not needed.
+        Ignored when ``rng_method`` is set.
+    rng_method : {"srand", "gsl", "numpy", None}, default=None
+        Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
+
+        - ``"srand"``: C stdlib srand/rand (matches R's RidgeR behavior)
+        - ``"gsl"``: GSL random number generator
+        - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
+        - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility
     use_cache : bool, default=False
         Cache permutation tables to disk for reuse.
+    batch_size : int, optional
+        Number of samples per batch. When set, samples are processed in
+        batches to reduce peak memory usage. Required when using
+        ``output_path`` for streaming results to disk.
     output_path : str, optional
         Path to an HDF5 file for streaming results to disk. When set,
         results are written as each batch completes and the function
@@ -1394,6 +1417,11 @@ def secact_activity_inference_scrnaseq(
     sort_genes : bool, default=False
         If True, sort common genes alphabetically before running ridge regression.
         This ensures reproducible results across different platforms.
+    sparse_mode : bool, default=False
+        When True and the input matrix is sparse, avoid densifying it.
+        Uses a memory-efficient computation path that is 30-40x more
+        memory-efficient for very sparse data (<5% density).
+        Trade-off: ~25% slower at 5-10% density.
     verbose : bool, default=False
         If True, print progress messages.
 
@@ -2000,8 +2028,20 @@ def secact_activity_inference_st(
     use_gsl_rng : bool, default=True
         Use GSL-compatible RNG for exact R/RidgeR reproducibility.
         Set to False for faster inference when R matching is not needed.
+        Ignored when ``rng_method`` is set.
+    rng_method : {"srand", "gsl", "numpy", None}, default=None
+        Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
+
+        - ``"srand"``: C stdlib srand/rand (matches R's RidgeR behavior)
+        - ``"gsl"``: GSL random number generator
+        - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
+        - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility
     use_cache : bool, default=False
         Cache permutation tables to disk for reuse.
+    batch_size : int, optional
+        Number of samples per batch. When set, samples are processed in
+        batches to reduce peak memory usage. Required when using
+        ``output_path`` for streaming results to disk.
     output_path : str, optional
         Path to an HDF5 file for streaming results to disk. When set,
         results are written as each batch completes and the function
@@ -2011,6 +2051,11 @@ def secact_activity_inference_st(
     sort_genes : bool, default=False
         If True, sort common genes alphabetically before running ridge regression.
         This ensures reproducible results across different platforms.
+    sparse_mode : bool, default=False
+        When True and the input matrix is sparse, avoid densifying it.
+        Uses a memory-efficient computation path that is 30-40x more
+        memory-efficient for very sparse data (<5% density).
+        Trade-off: ~25% slower at 5-10% density.
     verbose : bool, default=False
         Print progress messages.
 
