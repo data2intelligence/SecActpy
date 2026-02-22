@@ -869,7 +869,7 @@ def secact_activity_inference(
     is_paired: bool = False,
     is_single_sample_level: bool = False,
     sig_matrix: str = "secact",
-    is_group_sig: bool = True,
+    is_group_sig: Optional[bool] = None,
     is_group_cor: float = 0.9,
     lambda_: float = 5e5,
     n_rand: int = 1000,
@@ -923,8 +923,11 @@ def secact_activity_inference(
         If True, calculate per-sample activity.
     sig_matrix : str or DataFrame, default="secact"
         Signature matrix. Either "secact", "cytosig", path to file, or DataFrame.
-    is_group_sig : bool, default=True
+    is_group_sig : bool or None, default=None
         Whether to group similar signatures by correlation.
+        If None (default), automatically set based on signature type:
+        True for SecAct (matching R's behavior), False for CytoSig.
+        For custom signature matrices, defaults to True.
     is_group_cor : float, default=0.9
         Correlation threshold for grouping.
     lambda_ : float, default=5e5
@@ -943,9 +946,21 @@ def secact_activity_inference(
     use_gsl_rng : bool, default=True
         Use GSL-compatible RNG for exact R/RidgeR reproducibility.
         Set to False for faster inference when R matching is not needed.
+        Ignored when ``rng_method`` is set.
+    rng_method : {"srand", "gsl", "numpy", None}, default=None
+        Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
+
+        - ``"srand"``: C stdlib srand/rand (matches R's RidgeR behavior)
+        - ``"gsl"``: GSL random number generator
+        - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
+        - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility
     use_cache : bool, default=False
         Cache permutation tables to disk for reuse. Enable when running
         multiple analyses with the same gene count for faster repeated runs.
+    batch_size : int, optional
+        Number of samples per batch. When set, samples are processed in
+        batches to reduce peak memory usage. Required when using
+        ``output_path`` for streaming results to disk.
     output_path : str, optional
         Path to an HDF5 file for streaming results to disk. When set,
         each batch's results are written directly to this file as they
@@ -959,6 +974,11 @@ def secact_activity_inference(
         This ensures reproducible results across different platforms but may
         differ from original gene order. Set to True for cross-platform
         reproducibility with R.
+    sparse_mode : bool, default=False
+        When True and the input matrix is sparse, avoid densifying it.
+        Uses a memory-efficient computation path that is 30-40x more
+        memory-efficient for very sparse data (<5% density).
+        Trade-off: ~25% slower at 5-10% density.
     verbose : bool, default=True
         Print progress information.
 
@@ -1048,6 +1068,18 @@ def secact_activity_inference(
 
     if verbose:
         print(f"  Loaded signature: {X.shape[0]} genes × {X.shape[1]} proteins")
+
+    # --- Step 1b: Resolve is_group_sig default based on signature type ---
+    # Matches R behavior: is.group.sig = ifelse(sigName=="SecAct", TRUE, FALSE)
+    if is_group_sig is None:
+        if isinstance(sig_matrix, str) and sig_matrix.lower() == "cytosig":
+            is_group_sig = False
+        else:
+            # SecAct, custom signatures, or DataFrame → default True
+            is_group_sig = True
+        if verbose:
+            sig_label = sig_matrix if isinstance(sig_matrix, str) else "custom"
+            print(f"  is_group_sig auto-resolved to {is_group_sig} for '{sig_label}'")
 
     # --- Step 2: Compute differential expression if needed ---
     if is_differential:
@@ -1296,7 +1328,7 @@ def secact_activity_inference_scrnaseq(
     cell_type_col: str,
     sig_matrix: str = "secact",
     is_single_cell_level: bool = False,
-    is_group_sig: bool = True,
+    is_group_sig: Optional[bool] = None,
     is_group_cor: float = 0.9,
     lambda_: float = 5e5,
     n_rand: int = 1000,
@@ -1332,8 +1364,10 @@ def secact_activity_inference_scrnaseq(
     is_single_cell_level : bool, default=False
         If True, calculate activity for each single cell.
         If False, aggregate to pseudo-bulk by cell type.
-    is_group_sig : bool, default=True
-        If True, group similar signatures by correlation.
+    is_group_sig : bool or None, default=None
+        Whether to group similar signatures by correlation.
+        If None (default), automatically set based on signature type:
+        True for SecAct (matching R's behavior), False for CytoSig.
     is_group_cor : float, default=0.9
         Correlation threshold for signature grouping.
     lambda_ : float, default=5e5
@@ -1399,6 +1433,16 @@ def secact_activity_inference_scrnaseq(
         )
     import anndata as ad
     from scipy import sparse
+
+    # Resolve is_group_sig default based on signature type
+    if is_group_sig is None:
+        if isinstance(sig_matrix, str) and sig_matrix.lower() == "cytosig":
+            is_group_sig = False
+        else:
+            is_group_sig = True
+        if verbose:
+            sig_label = sig_matrix if isinstance(sig_matrix, str) else "custom"
+            print(f"  is_group_sig auto-resolved to {is_group_sig} for '{sig_label}'")
 
     if verbose:
         print("SecActPy scRNAseq Activity Inference")
@@ -1891,7 +1935,7 @@ def secact_activity_inference_st(
     is_spot_level: bool = True,
     scale_factor: float = 1e5,
     sig_matrix: str = "secact",
-    is_group_sig: bool = True,
+    is_group_sig: Optional[bool] = None,
     is_group_cor: float = 0.9,
     lambda_: float = 5e5,
     n_rand: int = 1000,
@@ -1935,8 +1979,10 @@ def secact_activity_inference_st(
         Normalization scale factor (counts per scale_factor).
     sig_matrix : str, default="secact"
         Signature matrix: "secact", "cytosig", or path to custom file.
-    is_group_sig : bool, default=True
-        If True, group similar signatures by correlation.
+    is_group_sig : bool or None, default=None
+        Whether to group similar signatures by correlation.
+        If None (default), automatically set based on signature type:
+        True for SecAct (matching R's behavior), False for CytoSig.
     is_group_cor : float, default=0.9
         Correlation threshold for signature grouping.
     lambda_ : float, default=5e5
@@ -2001,6 +2047,16 @@ def secact_activity_inference_st(
     >>> result = secact_activity_inference_st(counts_df)
     """
     from scipy import sparse
+
+    # Resolve is_group_sig default based on signature type
+    if is_group_sig is None:
+        if isinstance(sig_matrix, str) and sig_matrix.lower() == "cytosig":
+            is_group_sig = False
+        else:
+            is_group_sig = True
+        if verbose:
+            sig_label = sig_matrix if isinstance(sig_matrix, str) else "custom"
+            print(f"  is_group_sig auto-resolved to {is_group_sig} for '{sig_label}'")
 
     if verbose:
         print("SecActPy Spatial Transcriptomics Activity Inference")

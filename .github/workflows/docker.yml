@@ -74,6 +74,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -95,6 +98,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          platforms: linux/amd64,linux/arm64
           build-args: |
             USE_GPU=false
             INSTALL_R=false
@@ -106,7 +110,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ===========================================================================
-  # GPU Image (Python only)
+  # GPU Image (Python only) - amd64 only (NVIDIA GPU required)
   # ===========================================================================
   build-gpu:
     runs-on: ubuntu-latest
@@ -137,6 +141,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          platforms: linux/amd64
           build-args: |
             USE_GPU=true
             INSTALL_R=false
@@ -170,6 +175,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -191,6 +199,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          platforms: linux/amd64,linux/arm64
           build-args: |
             USE_GPU=false
             INSTALL_R=true
@@ -204,7 +213,7 @@ jobs:
         timeout-minutes: 120  # R builds take longer
 
   # ===========================================================================
-  # GPU + R Image (Python + CuPy + R SecAct/RidgeR/SpaCET)
+  # GPU + R Image (Python + CuPy + R SecAct/RidgeR/SpaCET) - amd64 only
   # Only builds on release or manual trigger with build_r=true
   # ===========================================================================
   build-gpu-r:
@@ -248,6 +257,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          platforms: linux/amd64
           build-args: |
             USE_GPU=true
             INSTALL_R=true
