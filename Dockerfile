@@ -125,12 +125,25 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "Skipping R installation"; \
     fi
 
-# Use Posit Package Manager for pre-compiled R binaries (much faster than source)
-ENV RSPM="https://packagemanager.posit.co/cran/__linux__/jammy/latest"
-
 # Tell arrow to download pre-built C++ binaries instead of compiling from source
 ENV NOT_CRAN=true
 ENV LIBARROW_BINARY=true
+
+# Configure Posit Package Manager (RSPM) for pre-compiled R binaries.
+# RSPM provides pre-compiled binary packages for x86_64 (amd64) Ubuntu only.
+# On arm64, packages must be compiled from source via CRAN, so we leave RSPM
+# unset and the R install commands fall back to https://cloud.r-project.org/.
+ARG INSTALL_R
+RUN if [ "$INSTALL_R" = "true" ]; then \
+        ARCH=$(dpkg --print-architecture) && \
+        if [ "$ARCH" = "amd64" ]; then \
+            echo 'RSPM=https://packagemanager.posit.co/cran/__linux__/jammy/latest' \
+                >> "$(R RHOME)/etc/Renviron.site" && \
+            echo "Configured RSPM for pre-compiled R binaries (amd64)"; \
+        else \
+            echo "Using CRAN source packages ($ARCH - no RSPM binaries available)"; \
+        fi; \
+    fi
 
 # Install Bioconductor packages FIRST (required by CRAN packages like NMF,
 # and by SecAct, SpaCET, and RidgeR)
