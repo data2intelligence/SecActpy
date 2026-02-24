@@ -101,6 +101,10 @@ export APPTAINER_TMPDIR="${SCRATCH}/apptainer_tmp"
 export APPTAINER_CACHEDIR="${SCRATCH}/apptainer_cache"
 mkdir -p "$APPTAINER_TMPDIR" "$APPTAINER_CACHEDIR"
 
+# Limit mksquashfs threads to SLURM allocation to avoid "Failed to create
+# thread" errors when SLURM cgroups restrict the process count
+export APPTAINER_MKSQUASHFS_PROCS="${SLURM_CPUS_PER_TASK:-$(nproc)}"
+
 # ---------------------------------------------------------------------------
 # Build each variant
 # ---------------------------------------------------------------------------
