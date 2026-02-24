@@ -152,9 +152,8 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ===========================================================================
-  # CPU + R Image (Python + R SecAct/RidgeR/SpaCET)
+  # CPU + R Image (Python + R SecAct/RidgeR/SpaCET) - amd64 only
   # Only builds on release or manual trigger with build_r=true
-  # Uses QEMU for cross-platform arm64 emulation on ubuntu-latest.
   # ===========================================================================
   build-cpu-r:
     runs-on: ubuntu-latest
@@ -175,9 +174,6 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -200,7 +196,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           build-args: |
             USE_GPU=false
             INSTALL_R=true
@@ -211,7 +207,7 @@ jobs:
             ${{ env.DOCKERHUB_REPO }}:${{ steps.version.outputs.version }}-with-r
           cache-from: type=gha
           cache-to: type=gha,mode=max
-        timeout-minutes: 360
+        timeout-minutes: 120
 
   # ===========================================================================
   # GPU + R Image (Python + CuPy + R SecAct/RidgeR/SpaCET) - amd64 only
