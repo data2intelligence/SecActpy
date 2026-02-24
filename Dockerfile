@@ -126,24 +126,13 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "Skipping R installation"; \
     fi
 
-# Switch R's BLAS/LAPACK to OpenBLAS for multi-threaded linear algebra
-# Reference BLAS is single-threaded; OpenBLAS uses all available cores
+# OpenBLAS is auto-selected over reference BLAS via alternatives priority
+# (no manual update-alternatives needed — libopenblas-dev wins automatically)
 ARG INSTALL_R
 RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
-        echo "Switching R to OpenBLAS..." && \
+        echo "Verifying BLAS configuration..." && \
         echo "========================================" && \
-        ARCH=$(dpkg --print-architecture) && \
-        MULTIARCH=$(dpkg-architecture -qDEB_HOST_MULTIARCH) && \
-        OPENBLAS_BLAS="/usr/lib/${MULTIARCH}/openblas-pthread/libblas.so.3" && \
-        OPENBLAS_LAPACK="/usr/lib/${MULTIARCH}/openblas-pthread/liblapack.so.3" && \
-        if [ -f "$OPENBLAS_BLAS" ]; then \
-            update-alternatives --set "libblas.so.3-${ARCH}" "$OPENBLAS_BLAS" && \
-            update-alternatives --set "liblapack.so.3-${ARCH}" "$OPENBLAS_LAPACK" && \
-            echo "OpenBLAS configured for ${ARCH}"; \
-        else \
-            echo "WARNING: OpenBLAS not found at $OPENBLAS_BLAS, using reference BLAS"; \
-        fi && \
         R -e "si <- sessionInfo(); cat('BLAS:', si\$BLAS, '\nLAPACK:', si\$LAPACK, '\n')"; \
     fi
 
