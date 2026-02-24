@@ -84,9 +84,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfftw3-dev \
     # For RcppParallel (Intel TBB)
     libtbb-dev \
-    # For R Matrix package
-    liblapack-dev \
+    # BLAS/LAPACK (reference + OpenBLAS for multi-threaded linear algebra)
     libblas-dev \
+    liblapack-dev \
+    libopenblas-dev \
     # Utilities
     git \
     wget \
@@ -123,6 +124,27 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
         R -e "cat('R version:', R.version.string, '\n')"; \
     else \
         echo "Skipping R installation"; \
+    fi
+
+# Switch R's BLAS/LAPACK to OpenBLAS for multi-threaded linear algebra
+# Reference BLAS is single-threaded; OpenBLAS uses all available cores
+ARG INSTALL_R
+RUN if [ "$INSTALL_R" = "true" ]; then \
+        echo "========================================" && \
+        echo "Switching R to OpenBLAS..." && \
+        echo "========================================" && \
+        ARCH=$(dpkg --print-architecture) && \
+        MULTIARCH=$(dpkg-architecture -qDEB_HOST_MULTIARCH) && \
+        OPENBLAS_BLAS="/usr/lib/${MULTIARCH}/openblas-pthread/libblas.so.3" && \
+        OPENBLAS_LAPACK="/usr/lib/${MULTIARCH}/openblas-pthread/liblapack.so.3" && \
+        if [ -f "$OPENBLAS_BLAS" ]; then \
+            update-alternatives --set "libblas.so.3-${ARCH}" "$OPENBLAS_BLAS" && \
+            update-alternatives --set "liblapack.so.3-${ARCH}" "$OPENBLAS_LAPACK" && \
+            echo "OpenBLAS configured for ${ARCH}"; \
+        else \
+            echo "WARNING: OpenBLAS not found at $OPENBLAS_BLAS, using reference BLAS"; \
+        fi && \
+        R -e "si <- sessionInfo(); cat('BLAS:', si\$BLAS, '\nLAPACK:', si\$LAPACK, '\n')"; \
     fi
 
 # Tell arrow to download pre-built C++ binaries instead of compiling from source
