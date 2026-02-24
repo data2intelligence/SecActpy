@@ -1,26 +1,50 @@
 #!/bin/bash
 # =============================================================================
-# Build SecActPy SIF images via SLURM
+# Build SecActPy SIF images from Docker Hub
 #
-# Usage:
-#   sbatch build_sif.sh cpu        # Python-only CPU image
-#   sbatch build_sif.sh gpu        # Python + CuPy GPU image
-#   sbatch build_sif.sh cpu-r      # Python + R CPU image
-#   sbatch build_sif.sh gpu-r      # Python + CuPy + R GPU image
+# Pulls pre-built images from Docker Hub and converts them to SIF format.
+# No root or fakeroot required. Can run on a login node or via SLURM.
+#
+# Usage (login node):
+#   ./build_sif.sh cpu           # Python-only CPU image
+#   ./build_sif.sh gpu           # Python + CuPy GPU image
+#   ./build_sif.sh cpu-r         # Python + R CPU image
+#   ./build_sif.sh gpu-r         # Python + CuPy + R GPU image
+#   ./build_sif.sh all           # All 4 variants
+#
+# Usage (SLURM):
+#   sbatch build_sif.sh cpu
+#   sbatch build_sif.sh all
 #
 # The SIF file is written to OUTPUT_DIR (default: directory of this script).
-# Override with: sbatch --export=OUTPUT_DIR=/path/to/dir build_sif.sh cpu
+# Override with: OUTPUT_DIR=/path/to/dir ./build_sif.sh cpu
 # =============================================================================
 
 #SBATCH --job-name=secactpy-build
 #SBATCH --output=secactpy-build-%j.out
 #SBATCH --error=secactpy-build-%j.err
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
-#SBATCH --time=04:00:00
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
+#SBATCH --time=01:00:00
 #SBATCH --partition=norm
 
 set -euo pipefail
+
+# Load apptainer module if available (required on HPC nodes)
+if command -v module &>/dev/null; then
+    module load apptainer 2>/dev/null || module load singularity 2>/dev/null || true
+fi
+
+# Docker Hub repository
+DOCKER_REPO="psychemistz/secactpy"
+
+# Map variant names to Docker Hub tags
+declare -A DOCKER_TAGS=(
+    [cpu]="cpu"
+    [gpu]="gpu"
+    [cpu-r]="cpu-with-r"
+    [gpu-r]="gpu-with-r"
+)
 
 # ---------------------------------------------------------------------------
 # Parse variant argument
@@ -28,50 +52,46 @@ set -euo pipefail
 VARIANT="${1:-}"
 if [ -z "$VARIANT" ]; then
     echo "ERROR: No variant specified."
-    echo "Usage: sbatch build_sif.sh [cpu|gpu|cpu-r|gpu-r]"
+    echo "Usage: ./build_sif.sh [cpu|gpu|cpu-r|gpu-r|all]"
     exit 1
 fi
 
-case "$VARIANT" in
-    cpu|gpu|cpu-r|gpu-r) ;;
-    *)
-        echo "ERROR: Unknown variant '$VARIANT'."
-        echo "Valid variants: cpu, gpu, cpu-r, gpu-r"
-        exit 1
-        ;;
-esac
+ALL_VARIANTS=(cpu gpu cpu-r gpu-r)
 
-# Increase walltime for R builds (they take much longer)
-case "$VARIANT" in
-    *-r)
-        # Note: SLURM walltime is set at submission. If you need more time for
-        # R builds, submit with: sbatch --time=08:00:00 build_sif.sh cpu-r
-        echo "INFO: R builds may take 2-4 hours. If this times out, resubmit with:"
-        echo "  sbatch --time=08:00:00 build_sif.sh $VARIANT"
-        ;;
-esac
+if [ "$VARIANT" = "all" ]; then
+    VARIANTS=("${ALL_VARIANTS[@]}")
+else
+    case "$VARIANT" in
+        cpu|gpu|cpu-r|gpu-r) VARIANTS=("$VARIANT") ;;
+        *)
+            echo "ERROR: Unknown variant '$VARIANT'."
+            echo "Valid variants: cpu, gpu, cpu-r, gpu-r, all"
+            exit 1
+            ;;
+    esac
+fi
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEF_FILE="${SCRIPT_DIR}/secactpy-${VARIANT}.def"
-OUTPUT_DIR="${OUTPUT_DIR:-${SCRIPT_DIR}}"
-SIF_FILE="${OUTPUT_DIR}/secactpy-${VARIANT}.sif"
-
-if [ ! -f "$DEF_FILE" ]; then
-    echo "ERROR: Definition file not found: $DEF_FILE"
-    exit 1
+if [ -n "${SLURM_SUBMIT_DIR:-}" ]; then
+    if [ -d "${SLURM_SUBMIT_DIR}/apptainer" ]; then
+        SCRIPT_DIR="${SLURM_SUBMIT_DIR}/apptainer"
+    else
+        SCRIPT_DIR="${SLURM_SUBMIT_DIR}"
+    fi
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
-
+OUTPUT_DIR="${OUTPUT_DIR:-${SCRIPT_DIR}}"
 mkdir -p "$OUTPUT_DIR"
 
 # ---------------------------------------------------------------------------
-# Apptainer cache/tmp on local scratch to avoid home quota issues
+# Apptainer cache/tmp — use local scratch to avoid home quota issues
 # ---------------------------------------------------------------------------
 if [ -n "${TMPDIR:-}" ]; then
     SCRATCH="$TMPDIR"
-elif [ -d "/lscratch/${SLURM_JOB_ID}" ]; then
+elif [ -n "${SLURM_JOB_ID:-}" ] && [ -d "/lscratch/${SLURM_JOB_ID}" ]; then
     SCRATCH="/lscratch/${SLURM_JOB_ID}"
 else
     SCRATCH=$(mktemp -d)
@@ -81,42 +101,45 @@ export APPTAINER_TMPDIR="${SCRATCH}/apptainer_tmp"
 export APPTAINER_CACHEDIR="${SCRATCH}/apptainer_cache"
 mkdir -p "$APPTAINER_TMPDIR" "$APPTAINER_CACHEDIR"
 
-echo "============================================================"
-echo "SecActPy SIF Build"
-echo "============================================================"
-echo "Variant:    $VARIANT"
-echo "Def file:   $DEF_FILE"
-echo "Output:     $SIF_FILE"
-echo "Scratch:    $SCRATCH"
-echo "CPUs:       ${SLURM_CPUS_PER_TASK:-$(nproc)}"
-echo "Memory:     ${SLURM_MEM_PER_NODE:-unknown} MB"
-echo "Start time: $(date)"
-echo "============================================================"
-
 # ---------------------------------------------------------------------------
-# Build
+# Build each variant
 # ---------------------------------------------------------------------------
-apptainer build --fakeroot "$SIF_FILE" "$DEF_FILE"
+for V in "${VARIANTS[@]}"; do
+    TAG="${DOCKER_TAGS[$V]}"
+    SIF_FILE="${OUTPUT_DIR}/secactpy-${V}.sif"
+    DOCKER_URI="docker://${DOCKER_REPO}:${TAG}"
 
-echo ""
-echo "============================================================"
-echo "Build completed: $(date)"
-echo "SIF file: $SIF_FILE ($(du -h "$SIF_FILE" | cut -f1))"
-echo "============================================================"
+    echo "============================================================"
+    echo "SecActPy SIF Build"
+    echo "============================================================"
+    echo "Variant:    $V"
+    echo "Source:     $DOCKER_URI"
+    echo "Output:     $SIF_FILE"
+    echo "Scratch:    $SCRATCH"
+    echo "Start time: $(date)"
+    echo "============================================================"
 
-# ---------------------------------------------------------------------------
-# Verify
-# ---------------------------------------------------------------------------
-echo ""
-echo "Verifying Python..."
-apptainer exec "$SIF_FILE" python3 -c "import secactpy; print(f'SecActPy {secactpy.__version__} OK, GPU: {secactpy.CUPY_AVAILABLE}')"
+    apptainer build "$SIF_FILE" "$DOCKER_URI"
 
-case "$VARIANT" in
-    *-r)
-        echo "Verifying R..."
-        apptainer exec "$SIF_FILE" R -e "cat('R version:', R.version.string, '\n'); library(SecAct); cat('SecAct OK\n'); library(RidgeR); cat('RidgeR OK\n')"
-        ;;
-esac
+    echo ""
+    echo "============================================================"
+    echo "Build completed: $(date)"
+    echo "SIF file: $SIF_FILE ($(du -h "$SIF_FILE" | cut -f1))"
+    echo "============================================================"
 
-echo ""
-echo "All verifications passed."
+    # Verify
+    echo ""
+    echo "Verifying Python..."
+    apptainer exec "$SIF_FILE" python3 -c "import secactpy; print(f'SecActPy {secactpy.__version__} OK, GPU: {secactpy.CUPY_AVAILABLE}')"
+
+    case "$V" in
+        *-r)
+            echo "Verifying R..."
+            apptainer exec "$SIF_FILE" R -e "cat('R version:', R.version.string, '\n'); library(SecAct); cat('SecAct OK\n'); library(RidgeR); cat('RidgeR OK\n')"
+            ;;
+    esac
+
+    echo ""
+    echo "All verifications passed for $V."
+    echo ""
+done
