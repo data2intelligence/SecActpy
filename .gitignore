@@ -184,3 +184,7 @@ dataset/output/
 logs/
 
 dataset
+
+# Claude Code local files
+CLAUDE.md
+.claude/

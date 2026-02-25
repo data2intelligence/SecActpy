@@ -241,6 +241,41 @@ result = secact_activity_inference(expression, backend='auto')
 
 See [GPU Acceleration](docs/gpu_acceleration.md) for full benchmarks and CUDA setup.
 
+## Benchmarks
+
+Performance comparison across environments using Ly86 dataset (16,325 genes × 100 samples, 1,000 permutations).
+
+### R Backends (RidgeR)
+
+| Backend | macOS Native | Docker (BLAS=1) | Docker (BLAS=8) |
+|---------|-------------|-----------------|-----------------|
+| gsl.old | 31.2s | 592.5s | 417.8s |
+| Yrow.st | 26.3s | 592.2s | 428.5s |
+| Tcol.st | 81.2s | 636.3s | 503.1s |
+| Tcol.mt(8) | 37.6s | **384.3s** | 466.3s |
+| Yrow.mt(8) | **25.6s** | 501.1s | **386.8s** |
+
+### Python (SecActPy)
+
+| Environment | srand | gsl |
+|-------------|-------|-----|
+| macOS Native | 52.6s | 56.8s |
+| Docker (BLAS=1) | 386.1s | 387.0s |
+
+### Best Elapsed Time per Environment
+
+| Environment | Best R | Best Python |
+|-------------|--------|-------------|
+| macOS native | **25.6s** (Yrow.mt) | **52.6s** (srand) |
+| Docker | **384.3s** (Tcol.mt) | **386.1s** (srand) |
+
+**Notes:**
+- macOS native uses Apple vecLib/Accelerate with AMX coprocessor (dedicated matrix hardware)
+- Docker uses generic OpenBLAS (no Apple Silicon optimization), explaining the ~15x gap
+- On native Linux servers (x86_64), Docker overhead is <1% — native and Docker performance are nearly identical
+- All backends produce numerically identical z-scores (max|diff| < 2e-14)
+- Optimal Docker config: `OPENBLAS_NUM_THREADS=1` with multi-threaded RidgeR (e.g., `Tcol.mt`)
+
 ## Command Line Interface
 
 ```bash
