@@ -26,7 +26,7 @@
 | `lambda_` | `5e5` | Ridge regularization parameter |
 | `n_rand` | `1000` | Number of permutations |
 | `seed` | `0` | Random seed for reproducibility |
-| `rng_method` | `None` | RNG backend: `'srand'` (match R), `'gsl'` (cross-platform), `'numpy'` (fast) |
+| `rng_method` | `None` | RNG backend: `'srand'` (match R, default), `'gsl'` (cross-platform), `'numpy'` (fast). `None` defaults to srand. |
 | `is_group_sig` | `True` | Group similar signatures by correlation before regression |
 | `backend` | `'auto'` | 'auto', 'numpy', or 'cupy' |
 | `use_cache` | `False` | Cache permutation tables to disk |

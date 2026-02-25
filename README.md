@@ -283,10 +283,10 @@ SecActPy supports three RNG backends for different reproducibility needs:
 | `'numpy'` | Native NumPy RNG (~70x faster) | Fast analysis when reproducibility with R is not needed |
 
 ```python
-# Match R SecAct on same platform
+# Match R SecAct on same platform (default)
 result = secact_activity_inference(expr, rng_method="srand")
 
-# Cross-platform reproducible (default)
+# Cross-platform reproducible
 result = secact_activity_inference(expr, rng_method="gsl")
 
 # Fastest (~70x faster permutations)

@@ -28,9 +28,9 @@ result = secact_activity_inference(
 )
 ```
 
-## Cross-platform reproducibility (default)
+## Cross-platform reproducibility
 
-The default RNG (`rng_method='gsl'`) uses a portable Mersenne Twister
+The `rng_method='gsl'` backend uses a portable Mersenne Twister
 implementation that produces identical results across all platforms (Linux,
 macOS, Windows). This does **not** match R output, but guarantees consistent
 SecActPy results everywhere.
@@ -38,7 +38,7 @@ SecActPy results everywhere.
 ```python
 result = secact_activity_inference(
     expression,
-    rng_method="gsl",  # Cross-platform reproducible (default)
+    rng_method="gsl",  # Cross-platform reproducible
 )
 ```
 
