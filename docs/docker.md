@@ -268,6 +268,53 @@ print(f'GPU array: {x}')
 "
 ```
 
+## Performance Benchmarks
+
+Performance comparison using Ly86 dataset (16,325 genes × 100 samples, 1,000 permutations).
+
+### R Backends (RidgeR)
+
+| Backend | macOS Native | Docker (BLAS=1) | Docker (BLAS=8) |
+|---------|-------------|-----------------|-----------------|
+| gsl.old | 31.2s | 592.5s | 417.8s |
+| Yrow.st | 26.3s | 592.2s | 428.5s |
+| Tcol.st | 81.2s | 636.3s | 503.1s |
+| Tcol.mt(8) | 37.6s | **384.3s** | 466.3s |
+| Yrow.mt(8) | **25.6s** | 501.1s | **386.8s** |
+
+### Python (SecActPy)
+
+| Environment | srand | gsl |
+|-------------|-------|-----|
+| macOS Native | 52.6s | 56.8s |
+| Docker (BLAS=1) | 386.1s | 387.0s |
+
+### Best Elapsed Time per Environment
+
+| Environment | Best R | Best Python |
+|-------------|--------|-------------|
+| macOS native | **25.6s** (Yrow.mt) | **52.6s** (srand) |
+| Docker | **384.3s** (Tcol.mt) | **386.1s** (srand) |
+
+### Notes
+
+- **macOS native** uses Apple vecLib/Accelerate with AMX coprocessor (dedicated matrix multiplication hardware), explaining the ~15x speed advantage over Docker
+- **Docker on macOS** uses generic OpenBLAS with basic ARM NEON SIMD (no Apple Silicon optimization)
+- **Docker on native Linux servers** (x86_64) has <1% overhead vs native — both use the same OpenBLAS/MKL, so the macOS-specific slowdown does not apply
+- All backends produce **numerically identical** z-scores (max|diff| < 2e-14)
+
+### Optimal Docker Configuration
+
+For best Docker performance, set `OPENBLAS_NUM_THREADS=1` and use multi-threaded RidgeR backends:
+
+```bash
+docker run --rm -e OPENBLAS_NUM_THREADS=1 \
+  -v $(pwd):/workspace psychemistz/secactpy:with-r \
+  Rscript -e "library(RidgeR); SecAct.inference.Tcol.mt(expr, ncores=8)"
+```
+
+This avoids thread oversubscription (OpenBLAS threads × OpenMP threads > CPU cores) which can cause severe performance degradation.
+
 ## Troubleshooting
 
 ### R Package Installation Failures
