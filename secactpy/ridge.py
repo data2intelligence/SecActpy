@@ -597,6 +597,7 @@ def _ridge_cupy(
         del Z
     del XtX_inv
     cp.get_default_memory_pool().free_all_blocks()
+    cp.get_default_pinned_memory_pool().free_all_blocks()
 
     # --- Step 2: Compute observed beta ---
     if verbose:
@@ -653,6 +654,7 @@ def _ridge_cupy(
 
         # Free memory periodically
         cp.get_default_memory_pool().free_all_blocks()
+    cp.get_default_pinned_memory_pool().free_all_blocks()
 
     # --- Step 4: Finalize statistics on GPU ---
     if verbose:
@@ -678,6 +680,7 @@ def _ridge_cupy(
     del T_gpu, Y_gpu, beta_gpu, aver, aver_sq, pvalue_counts
     del abs_beta, mean, var, se_gpu, zscore_gpu, pvalue_gpu
     cp.get_default_memory_pool().free_all_blocks()
+    cp.get_default_pinned_memory_pool().free_all_blocks()
     gc.collect()
 
     return {
@@ -918,6 +921,7 @@ def _ridge_sparse_cupy(
 
     del XtX, XtX_reg, X_gpu, XtX_inv
     cp.get_default_memory_pool().free_all_blocks()
+    cp.get_default_pinned_memory_pool().free_all_blocks()
 
     # --- Step 1b: Compute normalization components on GPU ---
     if needs_norm:
@@ -999,6 +1003,7 @@ def _ridge_sparse_cupy(
             del inv_perm_idx_gpu, T_perm, beta_perm
 
         cp.get_default_memory_pool().free_all_blocks()
+    cp.get_default_pinned_memory_pool().free_all_blocks()
 
     # --- Step 4: Finalize statistics ---
     if verbose:
@@ -1026,6 +1031,7 @@ def _ridge_sparse_cupy(
     if correction_gpu is not None:
         del correction_gpu
     cp.get_default_memory_pool().free_all_blocks()
+    cp.get_default_pinned_memory_pool().free_all_blocks()
     gc.collect()
 
     return {

@@ -104,6 +104,9 @@ from .batch import (
     ridge_batch,
 )
 
+# Streaming H5AD processing
+from .streaming import H5ADChunkReader, ridge_batch_streaming
+
 # High-level API (most users need only these)
 from .inference import (
     compute_differential,
@@ -203,6 +206,8 @@ __all__ = [
     "estimate_batch_size",
     "estimate_memory",
     "StreamingResultWriter",
+    "H5ADChunkReader",
+    "ridge_batch_streaming",
     "PopulationStats",
     "ProjectionComponents",
     "precompute_population_stats",

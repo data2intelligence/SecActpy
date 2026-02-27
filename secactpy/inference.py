@@ -22,6 +22,7 @@ The main function `secact_activity()` handles:
 - Result formatting with proper row/column labels
 """
 
+import gc
 import numpy as np
 import pandas as pd
 import warnings
@@ -1354,6 +1355,8 @@ def secact_activity_inference_scrnaseq(
     output_compression: Optional[str] = "gzip",
     sort_genes: bool = False,
     sparse_mode: bool = False,
+    streaming: bool = False,
+    streaming_chunk_size: int = 50_000,
     verbose: bool = False
 ) -> Optional[dict[str, Any]]:
     """
@@ -1422,6 +1425,15 @@ def secact_activity_inference_scrnaseq(
         Uses a memory-efficient computation path that is 30-40x more
         memory-efficient for very sparse data (<5% density).
         Trade-off: ~25% slower at 5-10% density.
+    streaming : bool, default=False
+        When True, read the H5AD file in chunks via h5py without loading
+        the full matrix into memory. Uses a two-pass algorithm:
+        pass 1 accumulates statistics, pass 2 runs inference.
+        Requires ``adata`` to be a file path (not an AnnData object)
+        and ``is_single_cell_level=True``.
+        Peak memory is ~3 GB instead of ~200 GB for 5M-cell datasets.
+    streaming_chunk_size : int, default=50_000
+        Number of cells per H5AD read chunk when ``streaming=True``.
     verbose : bool, default=False
         If True, print progress messages.
 
@@ -1476,6 +1488,42 @@ def secact_activity_inference_scrnaseq(
         print("SecActPy scRNAseq Activity Inference")
         print("=" * 50)
 
+    # --- Streaming early-exit ---
+    if streaming:
+        if not isinstance(adata, (str, Path)):
+            raise ValueError(
+                "streaming=True requires adata to be a file path (str or Path), "
+                "not an in-memory AnnData object."
+            )
+        if not is_single_cell_level:
+            raise ValueError(
+                "streaming=True requires is_single_cell_level=True. "
+                "Pseudo-bulk aggregation is not supported in streaming mode."
+            )
+        from .streaming import run_streaming_scrnaseq
+        return run_streaming_scrnaseq(
+            h5ad_path=str(adata),
+            cell_type_col=cell_type_col,
+            sig_matrix=sig_matrix,
+            is_group_sig=is_group_sig,
+            is_group_cor=is_group_cor,
+            lambda_=lambda_,
+            n_rand=n_rand,
+            seed=seed,
+            sig_filter=sig_filter,
+            backend=backend,
+            use_gsl_rng=use_gsl_rng,
+            rng_method=rng_method,
+            use_cache=use_cache,
+            batch_size=batch_size if batch_size is not None else 5000,
+            output_path=output_path,
+            output_compression=output_compression,
+            sort_genes=sort_genes,
+            sparse_mode=sparse_mode,
+            chunk_size=streaming_chunk_size,
+            verbose=verbose,
+        )
+
     # --- Step 0: Load AnnData if path is provided ---
     if isinstance(adata, (str, Path)):
         adata_path = str(adata)
@@ -1518,16 +1566,19 @@ def secact_activity_inference_scrnaseq(
                 print("           For accurate results, provide raw counts in adata.raw")
                 print("           Attempting to proceed with normalized data...")
 
-    # Transpose to (genes × cells) to match R convention
+    # Transpose to (genes × cells) to match R convention.
+    # Free counts_raw and adata.X immediately after transpose to avoid holding
+    # two copies of the full matrix simultaneously.
     if sparse.issparse(counts_raw):
         counts = counts_raw.T.tocsr()  # Now (genes × cells)
     else:
         counts = counts_raw.T  # Now (genes × cells)
+    del counts_raw
 
     if verbose:
         print(f"  Transposed to: {counts.shape} (genes × cells)")
 
-    # Get cell names and cell types
+    # Get cell names and cell types (extract before freeing adata)
     cell_names = list(adata.obs_names)
 
     if cell_type_col not in adata.obs.columns:
@@ -1535,6 +1586,11 @@ def secact_activity_inference_scrnaseq(
                         f"Available columns: {list(adata.obs.columns)}")
 
     cell_types = adata.obs[cell_type_col].values
+
+    # Free adata — we have extracted counts, gene_names, cell_names, cell_types.
+    # This releases the AnnData's obs/var/obsm/obsp memory before heavy computation.
+    del adata
+    gc.collect()
 
     # --- Step 2: Standardize gene symbols ---
     # Convert to uppercase (matching R's .transfer_symbol)
@@ -1649,11 +1705,15 @@ def secact_activity_inference_scrnaseq(
 
         if sparse_mode and sparse.issparse(counts):
             # --- Sparse end-to-end path ---
-            # CPM and log2 are zero-preserving, so Y stays sparse
+            # CPM and log2 are zero-preserving, so Y stays sparse.
+            # Convert to float64 in-place first, then multiply — avoids
+            # holding both the original and a temporary float64 copy.
             col_sums = np.asarray(counts.sum(axis=0)).ravel()
             from scipy.sparse import diags as _sp_diags
             scaling = _sp_diags(1e5 / col_sums)
-            expr_sparse = counts.astype(np.float64) @ scaling  # sparse CPM
+            counts = counts.astype(np.float64)   # in-place type promotion
+            expr_sparse = counts @ scaling        # sparse CPM
+            del counts                            # free original
             expr_sparse = expr_sparse.tocsc()
             expr_sparse.data = np.log2(expr_sparse.data + 1)  # sparse log2
 
@@ -1979,6 +2039,8 @@ def secact_activity_inference_st(
     output_compression: Optional[str] = "gzip",
     sort_genes: bool = False,
     sparse_mode: bool = False,
+    streaming: bool = False,
+    streaming_chunk_size: int = 50_000,
     verbose: bool = False
 ) -> Optional[dict[str, Any]]:
     """
@@ -2056,6 +2118,14 @@ def secact_activity_inference_st(
         Uses a memory-efficient computation path that is 30-40x more
         memory-efficient for very sparse data (<5% density).
         Trade-off: ~25% slower at 5-10% density.
+    streaming : bool, default=False
+        When True, read the H5AD file in chunks via h5py without loading
+        the full matrix into memory. Uses a two-pass algorithm:
+        pass 1 accumulates statistics, pass 2 runs inference.
+        Requires ``input_data`` to be an H5AD file path,
+        ``is_spot_level=True``, and ``input_control=None``.
+    streaming_chunk_size : int, default=50_000
+        Number of spots per H5AD read chunk when ``streaming=True``.
     verbose : bool, default=False
         Print progress messages.
 
@@ -2106,6 +2176,50 @@ def secact_activity_inference_st(
     if verbose:
         print("SecActPy Spatial Transcriptomics Activity Inference")
         print("=" * 50)
+
+    # --- Streaming early-exit ---
+    if streaming:
+        if not isinstance(input_data, (str, Path)):
+            raise ValueError(
+                "streaming=True requires input_data to be an H5AD file path."
+            )
+        input_path = str(input_data)
+        if not input_path.endswith('.h5ad'):
+            raise ValueError(
+                "streaming=True requires an H5AD file path (not a Visium folder)."
+            )
+        if not is_spot_level:
+            raise ValueError(
+                "streaming=True requires is_spot_level=True."
+            )
+        if input_control is not None:
+            raise ValueError(
+                "streaming=True does not support input_control. "
+                "Row-mean centering is used as control."
+            )
+        from .streaming import run_streaming_st
+        return run_streaming_st(
+            h5ad_path=input_path,
+            sig_matrix=sig_matrix,
+            is_group_sig=is_group_sig,
+            is_group_cor=is_group_cor,
+            scale_factor=scale_factor,
+            lambda_=lambda_,
+            n_rand=n_rand,
+            seed=seed,
+            sig_filter=sig_filter,
+            backend=backend,
+            use_gsl_rng=use_gsl_rng,
+            rng_method=rng_method,
+            use_cache=use_cache,
+            batch_size=batch_size if batch_size is not None else 5000,
+            output_path=output_path,
+            output_compression=output_compression,
+            sort_genes=sort_genes,
+            sparse_mode=sparse_mode,
+            chunk_size=streaming_chunk_size,
+            verbose=verbose,
+        )
 
     # Track cell type annotations if available
     cell_types = None

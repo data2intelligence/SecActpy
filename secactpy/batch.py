@@ -387,6 +387,7 @@ def _process_batch_cupy(
     del Y_gpu, beta_gpu, aver, aver_sq, pvalue_counts, abs_beta, mean, var
     del se_gpu, zscore_gpu, pvalue_gpu
     cp.get_default_memory_pool().free_all_blocks()
+    cp.get_default_pinned_memory_pool().free_all_blocks()
 
     return result
 
@@ -796,6 +797,7 @@ def _process_sparse_batch_cupy(
     if row_means_gpu is not None:
         del row_means_gpu
     cp.get_default_memory_pool().free_all_blocks()
+    cp.get_default_pinned_memory_pool().free_all_blocks()
 
     return result
 
@@ -984,8 +986,9 @@ def _ridge_batch_sparse_path(
     del proj, full_stats, inv_perm_table
     if use_gpu and cp is not None:
         cp.get_default_memory_pool().free_all_blocks()
+        cp.get_default_pinned_memory_pool().free_all_blocks()
     gc.collect()
-    
+
     if writer is not None:
         writer.close()
         if verbose:
@@ -1210,6 +1213,7 @@ def ridge_batch(
         T = _compute_T_cupy(X_gpu, lambda_)
         del X_gpu
         cp.get_default_memory_pool().free_all_blocks()
+        cp.get_default_pinned_memory_pool().free_all_blocks()
     else:
         T = _compute_T_numpy(X, lambda_)
     
@@ -1270,6 +1274,7 @@ def ridge_batch(
     del T, inv_perm_table
     if use_gpu:
         cp.get_default_memory_pool().free_all_blocks()
+        cp.get_default_pinned_memory_pool().free_all_blocks()
     gc.collect()
     
     if writer is not None:
