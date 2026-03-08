@@ -15,6 +15,8 @@
 |----------|-------------|
 | `ridge()` | Single-call ridge regression with permutation testing |
 | `ridge_batch()` | Batch processing for large datasets (dense or sparse) |
+| `ridge_batch_streaming()` | Two-pass streaming inference for >5M-cell H5AD files |
+| `H5ADChunkReader` | Memory-efficient chunk reader for H5AD files via h5py |
 | `estimate_batch_size()` | Estimate optimal batch size for available memory |
 | `estimate_memory()` | Estimate memory requirements |
 
@@ -49,6 +51,17 @@
 | `batch_size` | `None` | Samples per batch (`None` = all at once) |
 | `output_path` | `None` | Stream results to H5AD file (requires `batch_size`) |
 | `output_compression` | `"gzip"` | Compression: "gzip", "lzf", or None |
+
+## Streaming H5AD Parameters
+
+These parameters are available on `secact_activity_inference_scrnaseq()` and
+`secact_activity_inference_st()` for processing >5M-cell datasets that exceed
+available RAM.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `streaming` | `False` | Enable two-pass chunk reading from H5AD (requires file path input, not AnnData) |
+| `streaming_chunk_size` | `50_000` | Number of cells per H5AD read chunk |
 
 For low-level `ridge()` / `ridge_batch()` usage and sparse column normalization
 details, see [Advanced API](advanced_api.md).

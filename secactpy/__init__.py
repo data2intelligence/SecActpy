@@ -94,7 +94,7 @@ For large datasets (>100k samples):
     >>> adata = results_to_anndata(results)  # For scanpy integration
 """
 
-__version__ = "0.2.3"
+__version__ = "0.2.5"
 
 # Batch processing for large datasets
 from .batch import (
@@ -208,11 +208,6 @@ __all__ = [
     "StreamingResultWriter",
     "H5ADChunkReader",
     "ridge_batch_streaming",
-    "PopulationStats",
-    "ProjectionComponents",
-    "precompute_population_stats",
-    "precompute_projection_components",
-    "ridge_batch_sparse_preserving",
     # I/O
     "load_results",
     "save_results",

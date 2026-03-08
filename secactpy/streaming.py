@@ -202,13 +202,22 @@ class H5ADChunkReader:
         elif "index" in var_group:
             names = var_group["index"][:]
         else:
-            # Fallback: try gene_name or other columns
-            for col in ("gene_name", "feature_name", "gene_symbol"):
-                if col in var_group:
-                    names = var_group[col][:]
-                    break
-            else:
-                raise ValueError("Cannot find gene names in H5AD var metadata")
+            # Try attrs['_index'] which names the index column
+            idx_col = var_group.attrs.get("_index", None)
+            if idx_col is not None:
+                idx_col = idx_col.decode() if isinstance(idx_col, bytes) else str(idx_col)
+                if idx_col in var_group:
+                    names = var_group[idx_col][:]
+                else:
+                    idx_col = None
+            if idx_col is None:
+                # Fallback: try gene_name or other columns
+                for col in ("gene_name", "feature_name", "gene_symbol"):
+                    if col in var_group:
+                        names = var_group[col][:]
+                        break
+                else:
+                    raise ValueError("Cannot find gene names in H5AD var metadata")
 
         return [n.decode() if isinstance(n, bytes) else str(n) for n in names]
 
@@ -230,8 +239,16 @@ class H5ADChunkReader:
         if col not in var_group:
             raise KeyError(f"Column '{col}' not found in var metadata")
 
-        vals = var_group[col][:]
-        return [v.decode() if isinstance(v, bytes) else str(v) for v in vals]
+        node = var_group[col]
+        if isinstance(node, h5py.Group):
+            # Categorical column: reconstruct from categories + codes
+            cats = node["categories"][:]
+            codes = node["codes"][:]
+            cats_str = [c.decode() if isinstance(c, bytes) else str(c) for c in cats]
+            return [cats_str[c] for c in codes]
+        else:
+            vals = node[:]
+            return [v.decode() if isinstance(v, bytes) else str(v) for v in vals]
 
     def read_obs_names(self) -> list:
         """Read cell/observation names (barcodes)."""
@@ -241,7 +258,16 @@ class H5ADChunkReader:
         elif "index" in obs_group:
             names = obs_group["index"][:]
         else:
-            raise ValueError("Cannot find cell names in H5AD obs metadata")
+            # Fall back to attrs['_index'] which names the index column
+            idx_col = obs_group.attrs.get("_index", None)
+            if idx_col is not None:
+                idx_col = idx_col.decode() if isinstance(idx_col, bytes) else str(idx_col)
+                if idx_col in obs_group:
+                    names = obs_group[idx_col][:]
+                else:
+                    raise ValueError(f"obs.attrs['_index'] points to '{idx_col}' but column not found in obs")
+            else:
+                raise ValueError("Cannot find cell names in H5AD obs metadata")
 
         return [n.decode() if isinstance(n, bytes) else str(n) for n in names]
 
@@ -284,7 +310,7 @@ class H5ADChunkReader:
         n_ensembl = sum(1 for g in names if g.startswith(("ENSG", "ENSMUSG")))
         if n_ensembl > len(names) * 0.5:
             var_cols = self.read_var_df_columns()
-            for col in ("gene_name", "feature_name", "gene_symbol"):
+            for col in ("gene_name", "feature_name", "gene_symbol", "symbol"):
                 if col in var_cols:
                     resolved = self.read_var_column(col)
                     if verbose:

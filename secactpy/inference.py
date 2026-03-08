@@ -53,7 +53,7 @@ def _resolve_gene_names(var_names, var_df, verbose=False):
     # Check if var_names look like Ensembl IDs
     n_ensembl = sum(1 for g in names if g.startswith(('ENSG', 'ENSMUSG')))
     if n_ensembl > len(names) * 0.5 and var_df is not None:
-        for col in ('gene_name', 'feature_name', 'gene_symbol'):
+        for col in ('gene_name', 'feature_name', 'gene_symbol', 'symbol'):
             if col in var_df.columns:
                 resolved = list(var_df[col])
                 if verbose:

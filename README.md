@@ -14,6 +14,7 @@ Python implementation of [SecAct](https://github.com/data2intelligence/SecAct) f
 - **SecAct Compatible**: Matches R SecAct/RidgeR results on the same platform (`rng_method='srand'`)
 - **GPU Acceleration**: Optional CuPy backend for large-scale analysis
 - **Million-Sample Scale**: Batch processing with streaming output for massive datasets
+- **Streaming H5AD**: Two-pass chunk reading for >5M-cell datasets without loading the full matrix (~3 GB peak vs ~200 GB)
 - **Built-in Signatures**: Includes SecAct and CytoSig signature matrices
 - **Multi-Platform Support**: Bulk RNA-seq, scRNA-seq, and Spatial Transcriptomics (Visium, CosMx)
 - **Smart Caching**: Optional permutation table caching for faster repeated analyses
@@ -219,6 +220,45 @@ sparse single-cell data (<5% density: ~1.8x faster; results identical).
 See [Batch Processing](docs/batch_processing.md) for worked examples and
 streaming output details.
 
+## Streaming H5AD (>5M Cells)
+
+For very large single-cell datasets (>5M cells) that exceed available RAM even
+with batch processing, `streaming=True` bypasses full-matrix loading entirely.
+The H5AD file is read in chunks via h5py using a two-pass algorithm:
+
+1. **Pass 1**: Read cell chunks, normalize (CPM + log2), accumulate row/column statistics
+2. **Pass 2**: Re-read chunks, compute per-chunk cross terms, run inference in sub-batches
+
+Peak memory drops from ~200 GB to ~3 GB for a 5M-cell dataset. Results are
+numerically identical to the non-streaming path.
+
+```python
+# scRNA-seq: 6.5M cells, ~3 GB peak memory
+result = secact_activity_inference_scrnaseq(
+    "large_atlas.h5ad",               # file path (not AnnData object)
+    cell_type_col="cell_type",
+    is_single_cell_level=True,
+    streaming=True,                    # enable two-pass chunk reading
+    streaming_chunk_size=50_000,       # cells per chunk (default)
+    output_path="results.h5ad",        # stream results to disk
+    verbose=True,
+)
+
+# Spatial transcriptomics: same interface
+result = secact_activity_inference_st(
+    "large_spatial.h5ad",
+    streaming=True,
+    output_path="st_results.h5ad",
+    verbose=True,
+)
+```
+
+> **Requirements**: `streaming=True` requires `adata` to be a file path (not an
+> in-memory AnnData), `is_single_cell_level=True` (scRNA-seq) or
+> `is_spot_level=True` (ST), and the H5AD must store X in sparse (CSR/CSC) format.
+
+See [Batch Processing](docs/batch_processing.md) for full details.
+
 ## API Reference
 
 See [API Reference](docs/api_reference.md) for full function signatures, parameters, and options. For low-level `ridge()` / `ridge_batch()` usage, see [Advanced API](docs/advanced_api.md).
@@ -329,6 +369,11 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for full version history.
+
+### v0.2.5
+- **Streaming H5AD**: `streaming=True` for two-pass chunk reading of >5M-cell datasets (~3 GB peak)
+- `H5ADChunkReader` for memory-efficient H5AD reading via h5py
+- Fixed H5AD index column detection for `obs.attrs['_index']` convention
 
 ### v0.2.4
 - `col_center` and `col_scale` parameters for independent control of sparse in-flight normalization

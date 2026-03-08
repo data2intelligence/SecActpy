@@ -27,7 +27,7 @@ Python implementation of [SecAct](https://github.com/data2intelligence/SecAct) f
 
 ## User Guide
 
-- [Batch Processing](batch_processing.md) — handle large datasets with memory-efficient batching
+- [Batch Processing](batch_processing.md) — handle large datasets with memory-efficient batching and streaming H5AD for >5M cells
 - [GPU Acceleration](gpu_acceleration.md) — speed up computation with CuPy
 - [Reproducibility](reproducibility.md) — RNG backends for cross-platform reproducibility
 - [Docker](docker.md) — run SecActPy in Docker containers
