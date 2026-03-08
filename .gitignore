@@ -179,6 +179,9 @@ dataset/output/
 *.tar
 *.zip
 
+# Apptainer/Singularity container images
+*.sif
+
 # Logs
 *.log
 logs/
