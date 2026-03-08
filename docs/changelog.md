@@ -5,6 +5,38 @@ All notable changes to SecActPy will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-02-26
+
+### Added
+- **Streaming H5AD processing** for datasets with >5M cells that exceed available
+  RAM. Two-pass chunk-reading algorithm via h5py reads CSR rows from H5AD without
+  loading the full matrix. Pass 1 accumulates row/column statistics; pass 2
+  performs inference in chunks. Peak memory reduced from ~200 GB to ~3 GB for
+  5M-cell datasets. Results are numerically identical to the non-streaming path.
+  - `streaming=True` and `streaming_chunk_size=50_000` parameters on
+    `secact_activity_inference_scrnaseq()` and `secact_activity_inference_st()`
+  - New `H5ADChunkReader` class for memory-efficient H5AD chunk reading
+  - New `ridge_batch_streaming()` orchestrator for two-pass streaming inference
+
+### Fixed
+- `H5ADChunkReader.read_obs_names()` and `read_var_names()` now handle H5AD
+  files where the index column name is stored in `obs.attrs['_index']` (e.g.,
+  `'cellID'`) rather than as a literal `_index` dataset. This is common in
+  large consortium datasets like the Inflammation Atlas.
+
+## [0.2.4] - 2026-02-20
+
+### Added
+- `col_center` and `col_scale` parameters for independent control of sparse
+  in-flight column normalization in `ridge_batch()`.
+
+## [0.2.3] - 2026-02-15
+
+### Added
+- `rng_method` parameter for explicit RNG backend selection (`'srand'`, `'gsl'`,
+  `'numpy'`) on all high-level inference functions.
+- `is_group_sig=True` as the default (previously `False`).
+
 ## [0.2.2] - 2026-02-08
 
 ### Added
@@ -96,6 +128,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - GSL-compatible random number generator
   - Cross-platform support (Linux, macOS, Windows)
 
+[0.2.5]: https://github.com/data2intelligence/SecActPy/releases/tag/v0.2.5
+[0.2.4]: https://github.com/data2intelligence/SecActPy/releases/tag/v0.2.4
+[0.2.3]: https://github.com/data2intelligence/SecActPy/releases/tag/v0.2.3
+[0.2.2]: https://github.com/data2intelligence/SecActPy/releases/tag/v0.2.2
 [0.2.1]: https://github.com/data2intelligence/SecActPy/releases/tag/v0.2.1
 [0.2.0]: https://github.com/data2intelligence/SecActPy/releases/tag/v0.2.0
 [0.1.2]: https://github.com/data2intelligence/SecActPy/releases/tag/v0.1.2
