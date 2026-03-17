@@ -98,11 +98,6 @@ class H5ADChunkReader:
 
     def _detect_x_location(self):
         """Find the sparse X matrix in the H5AD hierarchy."""
-        # Prefer raw/X (raw counts) over X (which may be normalized)
-        for prefix in ("raw/X", "raw/var", "X"):
-            if prefix in self._file:
-                break
-
         # Check for raw counts first
         if "raw" in self._file and "X" in self._file["raw"]:
             self._x_group = self._file["raw/X"]
@@ -189,52 +184,53 @@ class H5ADChunkReader:
 
     # -- metadata access ------------------------------------------------------
 
+    @property
+    def _var_group(self):
+        """Return the var metadata group (raw/var if using raw, else var)."""
+        if self._use_raw and "raw" in self._file:
+            return self._file["raw/var"]
+        return self._file["var"]
+
+    @staticmethod
+    def _read_h5_index(group) -> Optional[np.ndarray]:
+        """Read index array from an H5AD obs/var group.
+
+        Tries _index, index, then attrs['_index'] to find the index column.
+        Returns the raw numpy array (bytes), or None if not found.
+        """
+        if "_index" in group:
+            return group["_index"][:]
+        if "index" in group:
+            return group["index"][:]
+        idx_col = group.attrs.get("_index", None)
+        if idx_col is not None:
+            idx_col = idx_col.decode() if isinstance(idx_col, bytes) else str(idx_col)
+            if idx_col in group:
+                return group[idx_col][:]
+        return None
+
     def read_var_names(self) -> list:
         """Read gene/variable names from H5AD."""
-        if self._use_raw and "raw" in self._file:
-            var_group = self._file["raw/var"]
-        else:
-            var_group = self._file["var"]
-
-        # Try _index first (standard AnnData convention)
-        if "_index" in var_group:
-            names = var_group["_index"][:]
-        elif "index" in var_group:
-            names = var_group["index"][:]
-        else:
-            # Try attrs['_index'] which names the index column
-            idx_col = var_group.attrs.get("_index", None)
-            if idx_col is not None:
-                idx_col = idx_col.decode() if isinstance(idx_col, bytes) else str(idx_col)
-                if idx_col in var_group:
-                    names = var_group[idx_col][:]
-                else:
-                    idx_col = None
-            if idx_col is None:
-                # Fallback: try gene_name or other columns
-                for col in ("gene_name", "feature_name", "gene_symbol"):
-                    if col in var_group:
-                        names = var_group[col][:]
-                        break
-                else:
-                    raise ValueError("Cannot find gene names in H5AD var metadata")
+        var_group = self._var_group
+        names = self._read_h5_index(var_group)
+        if names is None:
+            # Fallback: try gene_name or other columns
+            for col in ("gene_name", "feature_name", "gene_symbol", "symbol"):
+                if col in var_group:
+                    names = var_group[col][:]
+                    break
+            else:
+                raise ValueError("Cannot find gene names in H5AD var metadata")
 
         return [n.decode() if isinstance(n, bytes) else str(n) for n in names]
 
     def read_var_df_columns(self) -> list:
         """Return available column names in the var group."""
-        if self._use_raw and "raw" in self._file:
-            var_group = self._file["raw/var"]
-        else:
-            var_group = self._file["var"]
-        return list(var_group.keys())
+        return list(self._var_group.keys())
 
     def read_var_column(self, col: str) -> list:
         """Read a single column from var metadata."""
-        if self._use_raw and "raw" in self._file:
-            var_group = self._file["raw/var"]
-        else:
-            var_group = self._file["var"]
+        var_group = self._var_group
 
         if col not in var_group:
             raise KeyError(f"Column '{col}' not found in var metadata")
@@ -245,7 +241,7 @@ class H5ADChunkReader:
             cats = node["categories"][:]
             codes = node["codes"][:]
             cats_str = [c.decode() if isinstance(c, bytes) else str(c) for c in cats]
-            return [cats_str[c] for c in codes]
+            return [cats_str[c] if c >= 0 else "" for c in codes]
         else:
             vals = node[:]
             return [v.decode() if isinstance(v, bytes) else str(v) for v in vals]
@@ -253,22 +249,9 @@ class H5ADChunkReader:
     def read_obs_names(self) -> list:
         """Read cell/observation names (barcodes)."""
         obs_group = self._file["obs"]
-        if "_index" in obs_group:
-            names = obs_group["_index"][:]
-        elif "index" in obs_group:
-            names = obs_group["index"][:]
-        else:
-            # Fall back to attrs['_index'] which names the index column
-            idx_col = obs_group.attrs.get("_index", None)
-            if idx_col is not None:
-                idx_col = idx_col.decode() if isinstance(idx_col, bytes) else str(idx_col)
-                if idx_col in obs_group:
-                    names = obs_group[idx_col][:]
-                else:
-                    raise ValueError(f"obs.attrs['_index'] points to '{idx_col}' but column not found in obs")
-            else:
-                raise ValueError("Cannot find cell names in H5AD obs metadata")
-
+        names = self._read_h5_index(obs_group)
+        if names is None:
+            raise ValueError("Cannot find cell names in H5AD obs metadata")
         return [n.decode() if isinstance(n, bytes) else str(n) for n in names]
 
     def read_obs_column(self, col: str) -> np.ndarray:
@@ -289,8 +272,11 @@ class H5ADChunkReader:
             # AnnData categorical: codes + categories
             codes = ds["codes"][:]
             categories = ds["categories"][:]
-            categories = [c.decode() if isinstance(c, bytes) else str(c) for c in categories]
-            return np.array([categories[c] if c >= 0 else "" for c in codes])
+            cats_str = np.array([c.decode() if isinstance(c, bytes) else str(c) for c in categories])
+            # Append empty string for negative codes (NaN/missing)
+            cats_with_na = np.append(cats_str, "")
+            codes = np.where(codes < 0, len(cats_str), codes)
+            return cats_with_na[codes]
         else:
             vals = ds[:]
             if vals.dtype.kind in ("S", "O"):
