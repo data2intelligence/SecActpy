@@ -500,7 +500,8 @@ class _StreamingStatsAccumulator:
         col_sums = np.asarray(Y_chunk.sum(axis=0)).ravel()
 
         # Column sum-of-squares without allocating a full sparse copy.
-        # Reuse the existing CSC structure with squared data array only.
+        # Shares indices/indptr with Y_csc — sum() must be called before
+        # Y_chunk leaves scope to avoid stale references.
         Y_csc = Y_chunk.tocsc() if not sps.isspmatrix_csc(Y_chunk) else Y_chunk
         col_sum_sq_csc = sps.csc_matrix(
             (Y_csc.data ** 2, Y_csc.indices, Y_csc.indptr), shape=Y_csc.shape
@@ -806,8 +807,10 @@ def ridge_batch_streaming(
         chunk_col_start = global_col
         chunk_col_end = global_col + chunk_n
 
-        # Compute cross terms for this chunk: cross_j = Y[:,j].T @ row_means
-        cross_chunk = np.asarray(Y_chunk.T @ row_means).ravel()
+        # Compute cross terms for this chunk: cross_j = sum_i Y_ij * row_means_i
+        # Use (row_means @ CSC) instead of (CSC.T @ row_means) to avoid a
+        # CSC→CSR transposition copy.
+        cross_chunk = np.asarray(row_means @ Y_chunk).ravel()
 
         # Compute per-cell sigma from cross terms + pass-1 accumulators
         mu_chunk = mu[chunk_col_start:chunk_col_end]
