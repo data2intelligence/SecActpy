@@ -44,7 +44,7 @@ from .rng import (
     generate_inverse_permutation_table_fast,
     get_cached_inverse_perm_table,
 )
-from .ridge import CUPY_AVAILABLE, EPS, DEFAULT_LAMBDA, DEFAULT_NRAND, DEFAULT_SEED, _get_rng
+from .ridge import CUPY_AVAILABLE, EPS, DEFAULT_LAMBDA, DEFAULT_NRAND, DEFAULT_SEED, _free_gpu_memory, _get_rng
 
 # Try to import h5py for streaming output
 try:
@@ -386,8 +386,7 @@ def _process_batch_cupy(
 
     del Y_gpu, beta_gpu, aver, aver_sq, pvalue_counts, abs_beta, mean, var
     del se_gpu, zscore_gpu, pvalue_gpu
-    cp.get_default_memory_pool().free_all_blocks()
-    cp.get_default_pinned_memory_pool().free_all_blocks()
+    _free_gpu_memory()
 
     return result
 
@@ -796,8 +795,7 @@ def _process_sparse_batch_cupy(
         del correction_gpu
     if row_means_gpu is not None:
         del row_means_gpu
-    cp.get_default_memory_pool().free_all_blocks()
-    cp.get_default_pinned_memory_pool().free_all_blocks()
+    _free_gpu_memory()
 
     return result
 
@@ -984,9 +982,8 @@ def _ridge_batch_sparse_path(
     total_time = time.time() - start_time
     
     del proj, full_stats, inv_perm_table
-    if use_gpu and cp is not None:
-        cp.get_default_memory_pool().free_all_blocks()
-        cp.get_default_pinned_memory_pool().free_all_blocks()
+    if use_gpu:
+        _free_gpu_memory()
     gc.collect()
 
     if writer is not None:
@@ -1212,8 +1209,7 @@ def ridge_batch(
         X_gpu = cp.asarray(X, dtype=cp.float64)
         T = _compute_T_cupy(X_gpu, lambda_)
         del X_gpu
-        cp.get_default_memory_pool().free_all_blocks()
-        cp.get_default_pinned_memory_pool().free_all_blocks()
+        _free_gpu_memory()
     else:
         T = _compute_T_numpy(X, lambda_)
     
@@ -1273,10 +1269,9 @@ def ridge_batch(
     
     del T, inv_perm_table
     if use_gpu:
-        cp.get_default_memory_pool().free_all_blocks()
-        cp.get_default_pinned_memory_pool().free_all_blocks()
+        _free_gpu_memory()
     gc.collect()
-    
+
     if writer is not None:
         writer.close()
         if verbose:

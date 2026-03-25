@@ -36,6 +36,7 @@ from typing import Any, Callable, Literal, Optional, Union
 
 import numpy as np
 from scipy import sparse as sps
+from scipy.sparse import diags as _sp_diags
 
 from .batch import (
     StreamingResultWriter,
@@ -45,7 +46,7 @@ from .batch import (
     _process_sparse_batch_cupy,
     _process_sparse_batch_numpy,
 )
-from .ridge import CUPY_AVAILABLE, DEFAULT_LAMBDA, DEFAULT_NRAND, DEFAULT_SEED, EPS, _get_rng
+from .ridge import CUPY_AVAILABLE, DEFAULT_LAMBDA, DEFAULT_NRAND, DEFAULT_SEED, EPS, _free_gpu_memory, _get_rng
 from .rng import generate_inverse_permutation_table_fast, get_cached_inverse_perm_table
 
 try:
@@ -59,6 +60,24 @@ try:
     import cupy as cp
 except ImportError:
     cp = None
+
+
+def _decode_h5_strings(arr: np.ndarray) -> list:
+    """Vectorized bytes→str conversion for h5py string arrays.
+
+    h5py returns fixed-length byte strings (dtype ``|S*``) or variable-length
+    object arrays.  ``np.char.decode`` handles the fixed-length case in C;
+    for object arrays we fall back to a list comprehension on the (usually
+    small) array.
+    """
+    if arr.dtype.kind == "S":
+        # Fixed-length byte strings — C-level vectorised decode
+        return np.char.decode(arr, "utf-8").tolist()
+    if arr.dtype.kind == "O":
+        # Variable-length bytes or mixed — element-wise
+        return [v.decode("utf-8") if isinstance(v, bytes) else str(v) for v in arr]
+    # Already unicode or numeric — just stringify
+    return [str(v) for v in arr]
 
 
 # =============================================================================
@@ -222,7 +241,7 @@ class H5ADChunkReader:
             else:
                 raise ValueError("Cannot find gene names in H5AD var metadata")
 
-        return [n.decode() if isinstance(n, bytes) else str(n) for n in names]
+        return _decode_h5_strings(names)
 
     def read_var_df_columns(self) -> list:
         """Return available column names in the var group."""
@@ -240,11 +259,10 @@ class H5ADChunkReader:
             # Categorical column: reconstruct from categories + codes
             cats = node["categories"][:]
             codes = node["codes"][:]
-            cats_str = [c.decode() if isinstance(c, bytes) else str(c) for c in cats]
+            cats_str = _decode_h5_strings(cats)
             return [cats_str[c] if c >= 0 else "" for c in codes]
         else:
-            vals = node[:]
-            return [v.decode() if isinstance(v, bytes) else str(v) for v in vals]
+            return _decode_h5_strings(node[:])
 
     def read_obs_names(self) -> list:
         """Read cell/observation names (barcodes)."""
@@ -252,7 +270,7 @@ class H5ADChunkReader:
         names = self._read_h5_index(obs_group)
         if names is None:
             raise ValueError("Cannot find cell names in H5AD obs metadata")
-        return [n.decode() if isinstance(n, bytes) else str(n) for n in names]
+        return _decode_h5_strings(names)
 
     def read_obs_column(self, col: str) -> np.ndarray:
         """Read a single column from obs metadata.
@@ -272,7 +290,7 @@ class H5ADChunkReader:
             # AnnData categorical: codes + categories
             codes = ds["codes"][:]
             categories = ds["categories"][:]
-            cats_str = np.array([c.decode() if isinstance(c, bytes) else str(c) for c in categories])
+            cats_str = np.array(_decode_h5_strings(categories))
             # Append empty string for negative codes (NaN/missing)
             cats_with_na = np.append(cats_str, "")
             codes = np.where(codes < 0, len(cats_str), codes)
@@ -280,7 +298,7 @@ class H5ADChunkReader:
         else:
             vals = ds[:]
             if vals.dtype.kind in ("S", "O"):
-                return np.array([v.decode() if isinstance(v, bytes) else str(v) for v in vals])
+                return np.array(_decode_h5_strings(vals))
             return vals
 
     # -- gene name resolution -------------------------------------------------
@@ -348,15 +366,25 @@ class H5ADChunkReader:
             yield start, end, chunk
 
     def _iter_chunks_csc(self):
-        """Read CSC-encoded files by loading column chunks and transposing.
+        """Read CSC-encoded files by converting to CSR in memory.
 
-        For CSC encoding, cells are columns. We read all columns but subset
-        rows (genes) — but since we need cell-chunks, we read the full matrix
-        in gene-chunks and assemble. This is less efficient than CSR, so we
-        fall back to reading the full sparse matrix and slicing rows.
+        CSC stores columns contiguously, so row-chunking requires loading the
+        full sparse matrix and converting to CSR.  This defeats the memory
+        goal of streaming for very large files.  A warning is emitted so users
+        can re-save their H5AD with ``write_compressed=True`` (CSR) instead.
         """
-        # For CSC, it's more efficient to read the full sparse matrix once
-        # and iterate over row slices. This still avoids densification.
+        nnz = self._x_group["data"].shape[0]
+        # ~20 bytes/nnz (data float64 + indices int32 + overhead) × 2 for CSC→CSR
+        est_bytes = nnz * 20 * 2
+        if est_bytes > 4e9:  # >4 GB
+            warnings.warn(
+                f"H5AD uses CSC encoding ({nnz:,} non-zeros, ~{est_bytes / 1e9:.1f} GB). "
+                "Streaming must load the full matrix to chunk by rows. "
+                "For true streaming, re-save with CSR encoding: "
+                "`adata.X = scipy.sparse.csr_matrix(adata.X); adata.write('out.h5ad')`",
+                stacklevel=2,
+            )
+
         indptr_ds = self._x_group["indptr"]
         data_ds = self._x_group["data"]
         indices_ds = self._x_group["indices"]
@@ -401,8 +429,8 @@ def normalize_chunk(
 
     Steps:
       1. Transpose → (n_genes, chunk_cells)
-      2. CPM per-cell on non-zeros
-      3. log2(x + 1) on non-zeros
+      2. CPM per-cell on non-zeros  (in-place on CSC data)
+      3. log2(x + 1) on non-zeros   (in-place)
       4. Subset rows to common_gene_idx
 
     Parameters
@@ -414,25 +442,23 @@ def normalize_chunk(
     scale_factor : float
         Library size normalization target (default 1e5 for CPM/10).
     """
-    n_cells = chunk_csr.shape[0]
+    # Transpose: CSR.T is natively CSC (no data copy — shares arrays)
+    # .astype(float64) produces an independent copy safe for in-place mutation.
+    chunk_t = chunk_csr.T.astype(np.float64)  # CSC (n_genes, chunk_cells)
 
-    # Transpose: (cells, genes) → (genes, cells) — work in CSC for col ops
-    chunk_t = chunk_csr.T.tocsc()  # (n_genes, chunk_cells)
-
-    # CPM per cell: scale each column (cell) by its total count
+    # CPM per cell: scale each column in-place via vectorized data multiply.
+    # For CSC, indptr[j]:indptr[j+1] indexes the non-zeros of column j.
     col_sums = np.asarray(chunk_t.sum(axis=0)).ravel()
-    # Avoid division by zero for empty cells
-    col_sums = np.where(col_sums == 0, 1.0, col_sums)
-    from scipy.sparse import diags as _sp_diags
+    col_sums[col_sums == 0] = 1.0
+    factors = scale_factor / col_sums
+    # Expand per-column factors to per-nonzero — fully vectorized, no matrix multiply
+    col_factors = np.repeat(factors, np.diff(chunk_t.indptr))
+    chunk_t.data *= col_factors
 
-    scaling = _sp_diags(scale_factor / col_sums)
-    chunk_t = chunk_t.astype(np.float64) @ scaling
-
-    # log2(x + 1) on non-zeros only (zero-preserving)
-    chunk_t = chunk_t.tocsc()
+    # log2(x + 1) in-place on non-zeros (zero-preserving)
     chunk_t.data = np.log2(chunk_t.data + 1)
 
-    # Subset to common genes (row selection on CSC → convert to CSR first)
+    # Subset to common genes: row selection is fast on CSR
     chunk_t_csr = chunk_t.tocsr()
     Y_chunk = chunk_t_csr[common_gene_idx, :]
 
@@ -470,10 +496,16 @@ class _StreamingStatsAccumulator:
         # Row sums (gene-wise, across cells)
         self.row_sums += np.asarray(Y_chunk.sum(axis=1)).ravel()
 
-        # Column sums and squared sums (cell-wise)
+        # Column sums (cell-wise)
         col_sums = np.asarray(Y_chunk.sum(axis=0)).ravel()
-        Y_sq = Y_chunk.multiply(Y_chunk)
-        col_sum_sq = np.asarray(Y_sq.sum(axis=0)).ravel()
+
+        # Column sum-of-squares without allocating a full sparse copy.
+        # Reuse the existing CSC structure with squared data array only.
+        Y_csc = Y_chunk.tocsc() if not sps.isspmatrix_csc(Y_chunk) else Y_chunk
+        col_sum_sq_csc = sps.csc_matrix(
+            (Y_csc.data ** 2, Y_csc.indices, Y_csc.indptr), shape=Y_csc.shape
+        )
+        col_sum_sq = np.asarray(col_sum_sq_csc.sum(axis=0)).ravel()
 
         self.col_sums_list.append(col_sums)
         self.col_sum_sq_list.append(col_sum_sq)
@@ -507,17 +539,8 @@ class _StreamingStatsAccumulator:
         grand_mean = self.grand_sum / (n * N)
         mu = mu_c - grand_mean
 
-        # Column variance of row-centered data:
-        # var(Y'_j) = (1/(n-1)) * [sum_i Y_ij^2 - 2*cross_j + sum(mu_r^2) - n*mu'_j^2]
-        # We need cross_j = sum_i Y_ij * mu_r_i — this requires pass 2 data.
-        # BUT: We can compute it partially. For pass 1, store what we can,
-        # and defer cross computation to pass 2.
-        #
-        # Actually, cross = Y.T @ row_means requires the full Y. In the
-        # non-streaming path, this is computed once from the full sparse Y.
-        # In streaming, we need to accumulate it in pass 2.
-        #
-        # We return partial stats here; cross will be accumulated in pass 2.
+        # cross_j = Y[:,j].T @ row_means is needed for variance but requires
+        # the full Y; it is accumulated in pass 2 of ridge_batch_streaming().
         sum_mu_r_sq = np.sum(row_means ** 2)
 
         return row_means, col_sums_all, col_sum_sq_all, mu, sum_mu_r_sq, grand_mean
@@ -622,7 +645,6 @@ def ridge_batch_streaming(
         t1 = time.time()
 
     reader = H5ADChunkReader(h5ad_path, chunk_size=chunk_size)
-    n_cells_total = reader.n_obs
     accumulator = _StreamingStatsAccumulator(n_genes=n_genes)
 
     # Also accumulate cross = Y.T @ row_means, but we need row_means first.
@@ -668,68 +690,21 @@ def ridge_batch_streaming(
         inv_perm_table = generate_inverse_permutation_table_fast(n_genes, n_rand, seed)
 
     # =========================================================================
-    # PASS 2: Accumulate cross terms, then process in sub-batches
+    # PASS 2: Compute cross terms, stats, and inference in a single read
     # =========================================================================
-    # We need cross_j = Y[:,j].T @ row_means for the variance computation.
-    # This requires re-reading all chunks.
+    # Per-cell variance requires cross_j = Y[:,j].T @ row_means. Since sigma
+    # is per-cell, we can compute it incrementally as each chunk is read,
+    # then immediately feed the chunk to inference — eliminating a third pass.
 
     if verbose:
-        print("  PASS 2: Computing cross terms and running inference...")
+        print("  PASS 2: Computing stats and running inference...")
         t2 = time.time()
 
-    # Accumulate cross terms
-    cross_all_list = []
-    reader = H5ADChunkReader(h5ad_path, chunk_size=chunk_size)
+    mu = mu_partial  # per-cell column means of row-centered data
 
-    for chunk_idx, (start, end, chunk_csr) in enumerate(reader.iter_chunks()):
-        Y_chunk = normalize_chunk(chunk_csr, common_gene_idx, scale_factor)
-        # cross_chunk[j] = Y_chunk[:, j].T @ row_means for each cell j in chunk
-        # Y_chunk is (n_genes, chunk_cells), row_means is (n_genes,)
-        cross_chunk = np.asarray(Y_chunk.T @ row_means).ravel()
-        cross_all_list.append(cross_chunk)
-        del chunk_csr, Y_chunk
-        if verbose and (chunk_idx + 1) % 10 == 0:
-            print(f"    Pass 2 cross-terms chunk {chunk_idx + 1}/{reader.n_chunks}")
-
-    reader.close()
-
-    cross_all = np.concatenate(cross_all_list)
-    del cross_all_list
-
-    # Now compute full population stats matching _compute_population_stats(row_center=True)
-    # mu'_j = col_sums_j / n_genes - grand_mean  (already computed as mu_partial)
-    mu = mu_partial
-
-    # Variance of row-centered data:
-    # var(Y'_j) = (1/(n-1)) * [Y_sq_col_sums_j - 2*cross_j + sum(mu_r^2) - n*mu_j'^2]
-    numerator = col_sum_sq_all - 2 * cross_all + sum_mu_r_sq - n_genes * mu ** 2
-    variance = numerator / (n_genes - 1)
-    variance = np.maximum(variance, 0)
-
-    sigma = np.sqrt(variance)
-    sigma = np.where(sigma < EPS, 1.0, sigma)
-    mu_over_sigma = mu / sigma
-
-    full_stats = _PopulationStats(
-        mu=mu,
-        sigma=sigma,
-        mu_over_sigma=mu_over_sigma,
-        n_genes=n_genes,
-        row_means=row_means,
-    )
-
-    del col_sums_all, col_sum_sq_all, cross_all, mu_partial
-    del variance, numerator
-    gc.collect()
-
-    if verbose:
-        print(f"  Population stats computed. Now processing inference batches...")
-
-    # =========================================================================
-    # PASS 3: Re-read chunks and process inference sub-batches
-    # =========================================================================
-    # We accumulate cells across chunks, then feed sub-batches of size
-    # `batch_size` to the existing batch processing functions.
+    # Pre-allocate per-cell stats arrays
+    sigma_all = np.empty(n_cells, dtype=np.float64)
+    mu_over_sigma_all = np.empty(n_cells, dtype=np.float64)
 
     # Setup streaming output
     writer = None
@@ -775,10 +750,15 @@ def ridge_batch_streaming(
             sub_end = min(sub_start + batch_size, buf_n)
             Y_sub = Y_buf[:, sub_start:sub_end]
 
-            # Slice stats for this sub-batch
             abs_col_start = global_col_start + sub_start
             abs_col_end = global_col_start + sub_end
-            batch_stats = full_stats.slice(abs_col_start, abs_col_end)
+            batch_stats = _PopulationStats(
+                mu=mu[abs_col_start:abs_col_end],
+                sigma=sigma_all[abs_col_start:abs_col_end],
+                mu_over_sigma=mu_over_sigma_all[abs_col_start:abs_col_end],
+                n_genes=n_genes,
+                row_means=row_means,
+            )
 
             if use_gpu:
                 batch_result = _process_sparse_batch_cupy(
@@ -816,19 +796,39 @@ def ridge_batch_streaming(
         gc.collect()
         return new_start
 
-    # Main loop: read chunks and buffer them
+    # Main loop: read chunks, compute per-chunk stats, then buffer for inference
     global_col = 0
     for chunk_idx, (start, end, chunk_csr) in enumerate(reader.iter_chunks()):
         Y_chunk = normalize_chunk(chunk_csr, common_gene_idx, scale_factor)
         del chunk_csr
 
         chunk_n = Y_chunk.shape[1]
+        chunk_col_start = global_col
+        chunk_col_end = global_col + chunk_n
+
+        # Compute cross terms for this chunk: cross_j = Y[:,j].T @ row_means
+        cross_chunk = np.asarray(Y_chunk.T @ row_means).ravel()
+
+        # Compute per-cell sigma from cross terms + pass-1 accumulators
+        mu_chunk = mu[chunk_col_start:chunk_col_end]
+        numerator = (col_sum_sq_all[chunk_col_start:chunk_col_end]
+                     - 2 * cross_chunk + sum_mu_r_sq
+                     - n_genes * mu_chunk ** 2)
+        variance = np.maximum(numerator / (n_genes - 1), 0)
+        sigma_chunk = np.sqrt(variance)
+        sigma_chunk = np.where(sigma_chunk < EPS, 1.0, sigma_chunk)
+
+        sigma_all[chunk_col_start:chunk_col_end] = sigma_chunk
+        mu_over_sigma_all[chunk_col_start:chunk_col_end] = mu_chunk / sigma_chunk
+        del cross_chunk, variance, sigma_chunk
+
         buffer_chunks.append(Y_chunk)
         buffer_n_cells += chunk_n
+        global_col = chunk_col_end
 
         # Flush when buffer is large enough
         if buffer_n_cells >= batch_size:
-            global_col = _flush_buffer(buffer_chunks, global_col)
+            _flush_buffer(buffer_chunks, global_col - buffer_n_cells)
             cells_processed += buffer_n_cells
             buffer_chunks = []
             buffer_n_cells = 0
@@ -844,24 +844,26 @@ def ridge_batch_streaming(
 
     # Flush remaining buffer
     if buffer_chunks:
-        global_col = _flush_buffer(buffer_chunks, global_col)
+        _flush_buffer(buffer_chunks, global_col - buffer_n_cells)
         cells_processed += buffer_n_cells
         buffer_chunks = []
 
     reader.close()
 
+    del col_sums_all, col_sum_sq_all, mu_partial, sigma_all, mu_over_sigma_all
+    gc.collect()
+
     if verbose:
         print(
-            f"  Pass 2+3 done: {cells_processed} cells, "
+            f"  Pass 2 done: {cells_processed} cells, "
             f"{n_batches_done} batches in {time.time() - t2:.1f}s"
         )
 
     # Finalize
     total_time = time.time() - start_time
-    del proj, full_stats, inv_perm_table
-    if use_gpu and cp is not None:
-        cp.get_default_memory_pool().free_all_blocks()
-        cp.get_default_pinned_memory_pool().free_all_blocks()
+    del proj, inv_perm_table
+    if use_gpu:
+        _free_gpu_memory()
     gc.collect()
 
     if writer is not None:
@@ -1016,7 +1018,7 @@ def run_streaming_scrnaseq(
     """
     import pandas as pd
 
-    from .inference import expand_rows
+    from .inference import _format_ridge_results
 
     if verbose:
         print("SecActPy Streaming scRNAseq Activity Inference")
@@ -1087,36 +1089,10 @@ def run_streaming_scrnaseq(
             print(f"  Results streamed to {output_path}")
         return None
 
-    # Format results as DataFrames
-    feature_names = X_scaled.columns.tolist()
-    beta_df = pd.DataFrame(result["beta"], index=feature_names, columns=cell_names)
-    se_df = pd.DataFrame(result["se"], index=feature_names, columns=cell_names)
-    zscore_df = pd.DataFrame(result["zscore"], index=feature_names, columns=cell_names)
-    pvalue_df = pd.DataFrame(result["pvalue"], index=feature_names, columns=cell_names)
-
-    if is_group_sig:
-        if verbose:
-            print("  Expanding grouped signatures...")
-        beta_df = expand_rows(beta_df)
-        se_df = expand_rows(se_df)
-        zscore_df = expand_rows(zscore_df)
-        pvalue_df = expand_rows(pvalue_df)
-
-        row_order = sorted(beta_df.index)
-        beta_df = beta_df.loc[row_order]
-        se_df = se_df.loc[row_order]
-        zscore_df = zscore_df.loc[row_order]
-        pvalue_df = pvalue_df.loc[row_order]
-
-    if verbose:
-        print(f"  Result shape: {beta_df.shape}")
-
-    return {
-        "beta": beta_df,
-        "se": se_df,
-        "zscore": zscore_df,
-        "pvalue": pvalue_df,
-    }
+    return _format_ridge_results(
+        result, X_scaled.columns.tolist(), cell_names,
+        is_group_sig=is_group_sig, verbose=verbose,
+    )
 
 
 def run_streaming_st(
@@ -1147,7 +1123,7 @@ def run_streaming_st(
     """
     import pandas as pd
 
-    from .inference import expand_rows
+    from .inference import _format_ridge_results
 
     if verbose:
         print("SecActPy Streaming ST Activity Inference")
@@ -1206,33 +1182,7 @@ def run_streaming_st(
             print(f"  Results streamed to {output_path}")
         return None
 
-    # Format results as DataFrames
-    feature_names = X_scaled.columns.tolist()
-    beta_df = pd.DataFrame(result["beta"], index=feature_names, columns=spot_names)
-    se_df = pd.DataFrame(result["se"], index=feature_names, columns=spot_names)
-    zscore_df = pd.DataFrame(result["zscore"], index=feature_names, columns=spot_names)
-    pvalue_df = pd.DataFrame(result["pvalue"], index=feature_names, columns=spot_names)
-
-    if is_group_sig:
-        if verbose:
-            print("  Expanding grouped signatures...")
-        beta_df = expand_rows(beta_df)
-        se_df = expand_rows(se_df)
-        zscore_df = expand_rows(zscore_df)
-        pvalue_df = expand_rows(pvalue_df)
-
-        row_order = sorted(beta_df.index)
-        beta_df = beta_df.loc[row_order]
-        se_df = se_df.loc[row_order]
-        zscore_df = zscore_df.loc[row_order]
-        pvalue_df = pvalue_df.loc[row_order]
-
-    if verbose:
-        print(f"  Result shape: {beta_df.shape}")
-
-    return {
-        "beta": beta_df,
-        "se": se_df,
-        "zscore": zscore_df,
-        "pvalue": pvalue_df,
-    }
+    return _format_ridge_results(
+        result, X_scaled.columns.tolist(), spot_names,
+        is_group_sig=is_group_sig, verbose=verbose,
+    )

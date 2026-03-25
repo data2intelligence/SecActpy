@@ -103,6 +103,13 @@ except Exception as e:
     CUPY_INIT_ERROR = str(e)
 
 
+def _free_gpu_memory():
+    """Free CuPy device and pinned memory pools."""
+    if cp is not None:
+        cp.get_default_memory_pool().free_all_blocks()
+        cp.get_default_pinned_memory_pool().free_all_blocks()
+
+
 # =============================================================================
 # Constants
 # =============================================================================
@@ -596,8 +603,7 @@ def _ridge_cupy(
     if 'Z' in dir():
         del Z
     del XtX_inv
-    cp.get_default_memory_pool().free_all_blocks()
-    cp.get_default_pinned_memory_pool().free_all_blocks()
+    _free_gpu_memory()
 
     # --- Step 2: Compute observed beta ---
     if verbose:
@@ -679,8 +685,7 @@ def _ridge_cupy(
     # Cleanup GPU memory
     del T_gpu, Y_gpu, beta_gpu, aver, aver_sq, pvalue_counts
     del abs_beta, mean, var, se_gpu, zscore_gpu, pvalue_gpu
-    cp.get_default_memory_pool().free_all_blocks()
-    cp.get_default_pinned_memory_pool().free_all_blocks()
+    _free_gpu_memory()
     gc.collect()
 
     return {
@@ -920,8 +925,7 @@ def _ridge_sparse_cupy(
     T_gpu = XtX_inv @ X_gpu.T
 
     del XtX, XtX_reg, X_gpu, XtX_inv
-    cp.get_default_memory_pool().free_all_blocks()
-    cp.get_default_pinned_memory_pool().free_all_blocks()
+    _free_gpu_memory()
 
     # --- Step 1b: Compute normalization components on GPU ---
     if needs_norm:
@@ -1030,8 +1034,7 @@ def _ridge_sparse_cupy(
         del sigma_gpu
     if correction_gpu is not None:
         del correction_gpu
-    cp.get_default_memory_pool().free_all_blocks()
-    cp.get_default_pinned_memory_pool().free_all_blocks()
+    _free_gpu_memory()
     gc.collect()
 
     return {

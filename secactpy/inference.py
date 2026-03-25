@@ -30,6 +30,8 @@ from pathlib import Path
 from typing import Optional, Union, Any, Literal
 import time
 
+from scipy.sparse import diags as _sp_diags
+
 from .ridge import ridge
 
 __all__ = [
@@ -870,6 +872,35 @@ def expand_rows(mat: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def _format_ridge_results(
+    result: dict,
+    feature_names: list,
+    sample_names: list,
+    is_group_sig: bool = False,
+    verbose: bool = False,
+) -> dict:
+    """Format raw ridge result arrays into labeled DataFrames.
+
+    Optionally expands grouped signatures and sorts rows alphabetically.
+    """
+    dfs = {
+        key: pd.DataFrame(result[key], index=feature_names, columns=sample_names)
+        for key in ("beta", "se", "zscore", "pvalue")
+    }
+
+    if is_group_sig:
+        if verbose:
+            print("  Expanding grouped signatures...")
+        dfs = {key: expand_rows(df) for key, df in dfs.items()}
+        row_order = sorted(dfs["beta"].index)
+        dfs = {key: df.loc[row_order] for key, df in dfs.items()}
+
+    if verbose:
+        print(f"  Result shape: {dfs['beta'].shape}")
+
+    return dfs
+
+
 # =============================================================================
 # Full Inference Function (matching R's SecAct.activity.inference)
 # =============================================================================
@@ -1225,36 +1256,10 @@ def secact_activity_inference(
     feature_names = X_scaled.columns.tolist()
     sample_names = Y_scaled.columns.tolist()
 
-    beta_df = pd.DataFrame(result['beta'], index=feature_names, columns=sample_names)
-    se_df = pd.DataFrame(result['se'], index=feature_names, columns=sample_names)
-    zscore_df = pd.DataFrame(result['zscore'], index=feature_names, columns=sample_names)
-    pvalue_df = pd.DataFrame(result['pvalue'], index=feature_names, columns=sample_names)
-
-    # --- Step 12: Expand grouped signatures back to individual rows ---
-    if is_group_sig:
-        if verbose:
-            print("  Expanding grouped signatures...")
-        beta_df = expand_rows(beta_df)
-        se_df = expand_rows(se_df)
-        zscore_df = expand_rows(zscore_df)
-        pvalue_df = expand_rows(pvalue_df)
-
-        # Sort by row name (matching R's behavior)
-        row_order = sorted(beta_df.index)
-        beta_df = beta_df.loc[row_order]
-        se_df = se_df.loc[row_order]
-        zscore_df = zscore_df.loc[row_order]
-        pvalue_df = pvalue_df.loc[row_order]
-
-    if verbose:
-        print(f"  Result shape: {beta_df.shape}")
-
-    return {
-        'beta': beta_df,
-        'se': se_df,
-        'zscore': zscore_df,
-        'pvalue': pvalue_df
-    }
+    return _format_ridge_results(
+        result, feature_names, sample_names,
+        is_group_sig=is_group_sig, verbose=verbose,
+    )
 
 
 # =============================================================================
@@ -1709,7 +1714,6 @@ def secact_activity_inference_scrnaseq(
             # Convert to float64 in-place first, then multiply — avoids
             # holding both the original and a temporary float64 copy.
             col_sums = np.asarray(counts.sum(axis=0)).ravel()
-            from scipy.sparse import diags as _sp_diags
             scaling = _sp_diags(1e5 / col_sums)
             counts = counts.astype(np.float64)   # in-place type promotion
             expr_sparse = counts @ scaling        # sparse CPM
@@ -1769,34 +1773,10 @@ def secact_activity_inference_scrnaseq(
                 return None
 
             feature_names = X_scaled.columns.tolist()
-            beta_df = pd.DataFrame(result['beta'], index=feature_names, columns=cell_names)
-            se_df = pd.DataFrame(result['se'], index=feature_names, columns=cell_names)
-            zscore_df = pd.DataFrame(result['zscore'], index=feature_names, columns=cell_names)
-            pvalue_df = pd.DataFrame(result['pvalue'], index=feature_names, columns=cell_names)
-
-            if is_group_sig:
-                if verbose:
-                    print("  Expanding grouped signatures...")
-                beta_df = expand_rows(beta_df)
-                se_df = expand_rows(se_df)
-                zscore_df = expand_rows(zscore_df)
-                pvalue_df = expand_rows(pvalue_df)
-
-                row_order = sorted(beta_df.index)
-                beta_df = beta_df.loc[row_order]
-                se_df = se_df.loc[row_order]
-                zscore_df = zscore_df.loc[row_order]
-                pvalue_df = pvalue_df.loc[row_order]
-
-            if verbose:
-                print(f"  Result shape: {beta_df.shape}")
-
-            return {
-                'beta': beta_df,
-                'se': se_df,
-                'zscore': zscore_df,
-                'pvalue': pvalue_df
-            }
+            return _format_ridge_results(
+                result, feature_names, cell_names,
+                is_group_sig=is_group_sig, verbose=verbose,
+            )
 
         # --- Dense path (default) ---
         if sparse.issparse(counts):
@@ -2347,7 +2327,6 @@ def secact_activity_inference_st(
             and (cell_type_col is None or is_spot_level)):
         # CPM and log2 are zero-preserving → Y stays sparse
         col_sums = np.asarray(counts.sum(axis=0)).ravel()
-        from scipy.sparse import diags as _sp_diags
         scaling = _sp_diags(scale_factor / col_sums)
         expr_sparse = counts.astype(np.float64) @ scaling  # sparse CPM
         expr_sparse = expr_sparse.tocsc()
@@ -2408,34 +2387,10 @@ def secact_activity_inference_st(
             return None
 
         feature_names = X_scaled.columns.tolist()
-        beta_df = pd.DataFrame(result['beta'], index=feature_names, columns=spot_names)
-        se_df = pd.DataFrame(result['se'], index=feature_names, columns=spot_names)
-        zscore_df = pd.DataFrame(result['zscore'], index=feature_names, columns=spot_names)
-        pvalue_df = pd.DataFrame(result['pvalue'], index=feature_names, columns=spot_names)
-
-        if is_group_sig:
-            if verbose:
-                print("  Expanding grouped signatures...")
-            beta_df = expand_rows(beta_df)
-            se_df = expand_rows(se_df)
-            zscore_df = expand_rows(zscore_df)
-            pvalue_df = expand_rows(pvalue_df)
-
-            row_order = sorted(beta_df.index)
-            beta_df = beta_df.loc[row_order]
-            se_df = se_df.loc[row_order]
-            zscore_df = zscore_df.loc[row_order]
-            pvalue_df = pvalue_df.loc[row_order]
-
-        if verbose:
-            print(f"  Result shape: {beta_df.shape}")
-
-        return {
-            'beta': beta_df,
-            'se': se_df,
-            'zscore': zscore_df,
-            'pvalue': pvalue_df
-        }
+        return _format_ridge_results(
+            result, feature_names, spot_names,
+            is_group_sig=is_group_sig, verbose=verbose,
+        )
 
     # --- Dense path (default) ---
     if sparse.issparse(counts):
