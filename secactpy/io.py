@@ -1054,7 +1054,7 @@ def _save_with_h5py(
         print("  import anndata")
         print(f"  adata = anndata.read_h5ad('{path.name}')")
         print(f"  beta = adata.X  # ({n_samples} × {n_features})")
-        print(f"  zscore = adata.obsm['zscore']")
+        print("  zscore = adata.obsm['zscore']")
 
 
 # =============================================================================

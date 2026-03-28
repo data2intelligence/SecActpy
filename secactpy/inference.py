@@ -69,7 +69,10 @@ def _load_sig_matrix(sig_matrix, verbose=False):
     from .signature import load_signature
 
     if isinstance(sig_matrix, pd.DataFrame):
-        return sig_matrix.copy()
+        X = sig_matrix.copy()
+        if verbose:
+            print(f"  Using signature: {X.shape[0]} genes × {X.shape[1]} proteins")
+        return X
     elif isinstance(sig_matrix, str):
         if sig_matrix.lower() in ["secact", "cytosig"]:
             X = load_signature(sig_matrix)

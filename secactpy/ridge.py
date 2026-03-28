@@ -105,6 +105,8 @@ except Exception as e:
 
 def resolve_backend(backend: str) -> str:
     """Resolve backend string ('auto'/'numpy'/'cupy') and validate availability."""
+    if backend not in ("auto", "numpy", "cupy"):
+        raise ValueError(f"Unknown backend: {backend!r}. Choose from: 'auto', 'numpy', 'cupy'")
     if backend == "auto":
         return "cupy" if CUPY_AVAILABLE else "numpy"
     if backend == "cupy" and not CUPY_AVAILABLE:

@@ -46,7 +46,6 @@ DEFAULT_BACKEND = "cupy" if CUPY_AVAILABLE else "numpy"
 
 def _get_h5_index(grp):
     """Extract index (obs/var names) from an h5py Group, handling multiple formats."""
-    # Try _index first
     if '_index' in grp:
         idx = grp['_index'][:]
     # Try index attribute pointing to a dataset

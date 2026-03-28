@@ -38,13 +38,12 @@ import numpy as np
 from scipy import sparse as sps
 from .batch import (
     StreamingResultWriter,
-    _compute_population_stats,
     _compute_projection_components,
     _PopulationStats,
     _process_sparse_batch_cupy,
     _process_sparse_batch_numpy,
 )
-from .ridge import CUPY_AVAILABLE, DEFAULT_LAMBDA, DEFAULT_NRAND, DEFAULT_SEED, EPS, _free_gpu_memory, _get_rng
+from .ridge import DEFAULT_LAMBDA, DEFAULT_NRAND, DEFAULT_SEED, EPS, _free_gpu_memory, _get_rng, resolve_backend
 from .rng import generate_inverse_permutation_table_fast, get_cached_inverse_perm_table
 
 try:
@@ -629,11 +628,7 @@ def ridge_batch_streaming(
     X = np.asarray(X, dtype=np.float64)
     n_genes, n_features = X.shape
 
-    # Backend selection
-    if backend == "auto":
-        backend = "cupy" if CUPY_AVAILABLE else "numpy"
-    elif backend == "cupy" and not CUPY_AVAILABLE:
-        raise ImportError("CuPy backend requested but not available")
+    backend = resolve_backend(backend)
     use_gpu = backend == "cupy"
 
     # =========================================================================
@@ -921,8 +916,6 @@ def _resolve_and_prepare_genes(
     common_gene_idx : ndarray
         Indices into gene_names for common genes.
     """
-    import pandas as pd
-
     from .inference import _prepare_signature_for_sparse
 
     # Resolve gene names
@@ -1017,8 +1010,6 @@ def run_streaming_scrnaseq(
 
     Called by ``secact_activity_inference_scrnaseq(streaming=True)``.
     """
-    import pandas as pd
-
     from .inference import _format_ridge_results
 
     if verbose:
@@ -1122,8 +1113,6 @@ def run_streaming_st(
 
     Called by ``secact_activity_inference_st(streaming=True)``.
     """
-    import pandas as pd
-
     from .inference import _format_ridge_results
 
     if verbose:
