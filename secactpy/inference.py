@@ -64,6 +64,24 @@ def _resolve_gene_names(var_names, var_df, verbose=False):
     return names
 
 
+def _load_sig_matrix(sig_matrix, verbose=False):
+    """Load signature matrix from name, file path, or DataFrame."""
+    from .signature import load_signature
+
+    if isinstance(sig_matrix, pd.DataFrame):
+        return sig_matrix.copy()
+    elif isinstance(sig_matrix, str):
+        if sig_matrix.lower() in ["secact", "cytosig"]:
+            X = load_signature(sig_matrix)
+        else:
+            X = pd.read_csv(sig_matrix, sep='\t', index_col=0)
+        if verbose:
+            print(f"  Loaded signature: {X.shape[0]} genes × {X.shape[1]} proteins")
+        return X
+    else:
+        raise ValueError("sig_matrix must be 'secact', 'cytosig', a file path, or a DataFrame")
+
+
 # =============================================================================
 # Data Loading Functions
 # =============================================================================
@@ -1069,8 +1087,6 @@ def secact_activity_inference(
     ...     verbose=True
     ... )
     """
-    from .signature import load_signature
-
     # --- Step 0: Load input data if file path ---
     if isinstance(input_profile, (str, Path)):
         if verbose:
@@ -1098,19 +1114,7 @@ def secact_activity_inference(
         )
 
     # --- Step 1: Load signature matrix ---
-    if isinstance(sig_matrix, pd.DataFrame):
-        X = sig_matrix.copy()
-    elif isinstance(sig_matrix, str):
-        if sig_matrix.lower() in ["secact", "cytosig"]:
-            X = load_signature(sig_matrix)
-        else:
-            # Assume it's a file path
-            X = pd.read_csv(sig_matrix, sep='\t', index_col=0)
-    else:
-        raise ValueError("sig_matrix must be 'secact', 'cytosig', a file path, or a DataFrame")
-
-    if verbose:
-        print(f"  Loaded signature: {X.shape[0]} genes × {X.shape[1]} proteins")
+    X = _load_sig_matrix(sig_matrix, verbose=verbose)
 
     # --- Step 1b: Resolve is_group_sig default based on signature type ---
     # Matches R behavior: is.group.sig = ifelse(sigName=="SecAct", TRUE, FALSE)
@@ -1281,21 +1285,8 @@ def _prepare_signature_for_sparse(
     Returns (X_scaled, common_genes, is_group_sig_flag) where X_scaled is
     the z-scored signature DataFrame aligned to common genes.
     """
-    from .signature import load_signature
-
     # Load signature
-    if isinstance(sig_matrix, pd.DataFrame):
-        X = sig_matrix.copy()
-    elif isinstance(sig_matrix, str):
-        if sig_matrix.lower() in ["secact", "cytosig"]:
-            X = load_signature(sig_matrix)
-        else:
-            X = pd.read_csv(sig_matrix, sep='\t', index_col=0)
-    else:
-        raise ValueError("sig_matrix must be 'secact', 'cytosig', a file path, or a DataFrame")
-
-    if verbose:
-        print(f"  Loaded signature: {X.shape[0]} genes × {X.shape[1]} proteins")
+    X = _load_sig_matrix(sig_matrix, verbose=verbose)
 
     # Filter signatures by available genes
     gene_set = set(gene_names)

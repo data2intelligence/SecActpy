@@ -47,7 +47,7 @@ import ctypes.util
 import os
 
 import numpy as np
-from typing import Optional, Tuple
+from typing import Optional
 
 __all__ = [
     'CStdlibRNG',
@@ -69,7 +69,10 @@ __all__ = [
 # Cache Configuration
 # =============================================================================
 
-DEFAULT_CACHE_DIR = "/data/parks34/.cache/ridgesig_perm_tables"
+DEFAULT_CACHE_DIR = os.path.join(
+    os.environ.get('XDG_CACHE_HOME', os.path.join(os.path.expanduser('~'), '.cache')),
+    'secactpy', 'perm_tables'
+)
 
 
 def _ensure_cache_dir(cache_dir: str = None) -> str:
@@ -848,7 +851,7 @@ REFERENCE_MT19937_SEED5489_FIRST5 = [
 ]
 
 
-def validate_mt19937() -> Tuple[bool, str]:
+def validate_mt19937() -> tuple[bool, str]:
     """
     Validate MT19937 implementation against reference values.
 
@@ -874,7 +877,7 @@ def validate_mt19937() -> Tuple[bool, str]:
     return True, "MT19937 implementation validated successfully"
 
 
-def validate_gslrng() -> Tuple[bool, str]:
+def validate_gslrng() -> tuple[bool, str]:
     """
     Validate GSLRNG implementation.
 
@@ -903,7 +906,7 @@ def validate_gslrng() -> Tuple[bool, str]:
     return True, "GSLRNG implementation validated successfully"
 
 
-def validate_cstdlib_rng() -> Tuple[bool, str]:
+def validate_cstdlib_rng() -> tuple[bool, str]:
     """
     Validate CStdlibRNG produces valid permutations.
 

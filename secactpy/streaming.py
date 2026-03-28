@@ -32,12 +32,10 @@ import time
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 from scipy import sparse as sps
-from scipy.sparse import diags as _sp_diags
-
 from .batch import (
     StreamingResultWriter,
     _compute_population_stats,

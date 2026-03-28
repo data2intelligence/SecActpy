@@ -28,7 +28,7 @@ Usage:
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Optional, Union, List
+from typing import Optional, Union
 import warnings
 
 try:
@@ -140,8 +140,8 @@ def _load_tsv_gz(filepath: Union[str, Path]) -> pd.DataFrame:
 
 def load_signature(
     name: str = DEFAULT_SIGNATURE,
-    features: Optional[List[str]] = None,
-    genes: Optional[List[str]] = None
+    features: Optional[list[str]] = None,
+    genes: Optional[list[str]] = None
 ) -> pd.DataFrame:
     """
     Load a bundled signature matrix.
@@ -235,8 +235,8 @@ def load_signature(
 
 
 def load_secact(
-    features: Optional[List[str]] = None,
-    genes: Optional[List[str]] = None
+    features: Optional[list[str]] = None,
+    genes: Optional[list[str]] = None
 ) -> pd.DataFrame:
     """
     Load the SecAct signature matrix.
@@ -259,8 +259,8 @@ def load_secact(
 
 
 def load_cytosig(
-    features: Optional[List[str]] = None,
-    genes: Optional[List[str]] = None
+    features: Optional[list[str]] = None,
+    genes: Optional[list[str]] = None
 ) -> pd.DataFrame:
     """
     Load the CytoSig signature matrix.
@@ -283,10 +283,10 @@ def load_cytosig(
 
 
 def load_lincytosig(
-    features: Optional[List[str]] = None,
-    genes: Optional[List[str]] = None,
-    cell_types: Optional[List[str]] = None,
-    cytokines: Optional[List[str]] = None,
+    features: Optional[list[str]] = None,
+    genes: Optional[list[str]] = None,
+    cell_types: Optional[list[str]] = None,
+    cytokines: Optional[list[str]] = None,
 ) -> pd.DataFrame:
     """
     Load the LinCytoSig signature matrix.
@@ -374,7 +374,7 @@ def load_lincytosig(
 # Information Functions
 # =============================================================================
 
-def list_signatures() -> List[str]:
+def list_signatures() -> list[str]:
     """
     List available signature matrices.
 

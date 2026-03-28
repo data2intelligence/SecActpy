@@ -44,7 +44,7 @@ from .rng import (
     generate_inverse_permutation_table_fast,
     get_cached_inverse_perm_table,
 )
-from .ridge import CUPY_AVAILABLE, EPS, DEFAULT_LAMBDA, DEFAULT_NRAND, DEFAULT_SEED, _free_gpu_memory, _get_rng
+from .ridge import CUPY_AVAILABLE, EPS, DEFAULT_LAMBDA, DEFAULT_NRAND, DEFAULT_SEED, _free_gpu_memory, _get_rng, resolve_backend
 
 # Try to import h5py for streaming output
 try:
@@ -67,6 +67,18 @@ __all__ = [
     'estimate_memory',
     'StreamingResultWriter',
 ]
+
+
+def _validate_batch_inputs(X, Y, n_rand, batch_size):
+    """Validate common inputs for batch processing functions."""
+    if X.ndim != 2 or Y.ndim != 2:
+        raise ValueError("X and Y must be 2D arrays")
+    if X.shape[0] != Y.shape[0]:
+        raise ValueError(f"X and Y must have same number of rows: {X.shape[0]} vs {Y.shape[0]}")
+    if n_rand <= 0:
+        raise ValueError("Batch processing requires n_rand > 0. Use ridge() for t-test.")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
 
 
 # =============================================================================
@@ -839,27 +851,15 @@ def _ridge_batch_sparse_path(
     
     X = np.asarray(X, dtype=np.float64)
     
-    if X.ndim != 2 or Y.ndim != 2:
-        raise ValueError("X and Y must be 2D arrays")
-    if X.shape[0] != Y.shape[0]:
-        raise ValueError(f"X and Y must have same number of rows: {X.shape[0]} vs {Y.shape[0]}")
-    if n_rand <= 0:
-        raise ValueError("Batch processing requires n_rand > 0")
-    if batch_size <= 0:
-        raise ValueError("batch_size must be positive")
-    
+    _validate_batch_inputs(X, Y, n_rand, batch_size)
+
     n_genes, n_features = X.shape
     n_samples = Y.shape[1]
     n_batches = math.ceil(n_samples / batch_size)
-    
-    # Backend selection
-    if backend == "auto":
-        backend = "cupy" if CUPY_AVAILABLE else "numpy"
-    elif backend == "cupy" and not CUPY_AVAILABLE:
-        raise ImportError("CuPy backend requested but not available")
-    
+
+    backend = resolve_backend(backend)
     use_gpu = (backend == "cupy")
-    
+
     if verbose:
         sparse_mem_mb = (Y.data.nbytes + Y.indices.nbytes + Y.indptr.nbytes) / 1e6
         nnz_pct = 100 * Y.nnz / (Y.shape[0] * Y.shape[1])
@@ -1153,14 +1153,7 @@ def ridge_batch(
     X = np.asarray(X, dtype=np.float64)
     Y = np.asarray(Y, dtype=np.float64)
     
-    if X.ndim != 2 or Y.ndim != 2:
-        raise ValueError("X and Y must be 2D arrays")
-    if X.shape[0] != Y.shape[0]:
-        raise ValueError(f"X and Y must have same number of rows: {X.shape[0]} vs {Y.shape[0]}")
-    if n_rand <= 0:
-        raise ValueError("Batch processing requires n_rand > 0. Use ridge() for t-test.")
-    if batch_size <= 0:
-        raise ValueError("batch_size must be positive")
+    _validate_batch_inputs(X, Y, n_rand, batch_size)
     
     n_genes, n_features = X.shape
     n_samples = Y.shape[1]
@@ -1173,12 +1166,7 @@ def ridge_batch(
         mem = estimate_memory(n_genes, n_features, n_samples, n_rand, batch_size)
         print(f"  Estimated memory: {mem['total']:.2f} GB total, {mem['per_batch']:.3f} GB per batch")
     
-    # Backend selection
-    if backend == "auto":
-        backend = "cupy" if CUPY_AVAILABLE else "numpy"
-    elif backend == "cupy" and not CUPY_AVAILABLE:
-        raise ImportError("CuPy backend requested but not available")
-    
+    backend = resolve_backend(backend)
     use_gpu = (backend == "cupy")
     
     if verbose:

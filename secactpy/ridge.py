@@ -79,7 +79,7 @@ def _get_rng(rng_method, use_gsl_rng, seed):
         return CStdlibRNG(seed), True
     return None, False
 
-__all__ = ['ridge', 'CUPY_AVAILABLE']
+__all__ = ['ridge', 'CUPY_AVAILABLE', 'resolve_backend']
 
 
 # =============================================================================
@@ -101,6 +101,20 @@ except ImportError:
 except Exception as e:
     # Store the error but don't warn yet - only warn when GPU is actually requested
     CUPY_INIT_ERROR = str(e)
+
+
+def resolve_backend(backend: str) -> str:
+    """Resolve backend string ('auto'/'numpy'/'cupy') and validate availability."""
+    if backend == "auto":
+        return "cupy" if CUPY_AVAILABLE else "numpy"
+    if backend == "cupy" and not CUPY_AVAILABLE:
+        error_msg = "CuPy backend requested but not available."
+        if CUPY_INIT_ERROR:
+            error_msg += f" GPU initialization failed: {CUPY_INIT_ERROR}"
+        else:
+            error_msg += " Install CuPy with: pip install cupy-cuda11x (or cupy-cuda12x)"
+        raise ImportError(error_msg)
+    return backend
 
 
 def _free_gpu_memory():
@@ -283,15 +297,7 @@ def ridge(
             print(f"  sparse_mode=True ({nnz_pct:.1f}% non-zero)")
 
     # --- Backend Selection ---
-    if backend == "auto":
-        backend = "cupy" if CUPY_AVAILABLE else "numpy"
-    elif backend == "cupy" and not CUPY_AVAILABLE:
-        error_msg = "CuPy backend requested but not available."
-        if CUPY_INIT_ERROR:
-            error_msg += f" GPU initialization failed: {CUPY_INIT_ERROR}"
-        else:
-            error_msg += " Install CuPy with: pip install cupy-cuda11x (or cupy-cuda12x)"
-        raise ImportError(error_msg)
+    backend = resolve_backend(backend)
 
     if verbose:
         print(f"  backend={backend}")

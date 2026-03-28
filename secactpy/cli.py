@@ -44,6 +44,59 @@ CUPY_AVAILABLE = _detect_gpu()
 DEFAULT_BACKEND = "cupy" if CUPY_AVAILABLE else "numpy"
 
 
+def _get_h5_index(grp):
+    """Extract index (obs/var names) from an h5py Group, handling multiple formats."""
+    # Try _index first
+    if '_index' in grp:
+        idx = grp['_index'][:]
+    # Try index attribute pointing to a dataset
+    elif 'index' in grp.attrs:
+        idx_name = grp.attrs['index']
+        if isinstance(idx_name, bytes):
+            idx_name = idx_name.decode('utf-8')
+        if idx_name in grp:
+            idx = grp[idx_name][:]
+        else:
+            idx = []
+    else:
+        # Look for any dataset that might be the index
+        idx = []
+        for key in grp.keys():
+            if key.startswith('_') or key == 'index':
+                idx = grp[key][:]
+                break
+
+    if len(idx) > 0:
+        if isinstance(idx[0], bytes):
+            idx = [x.decode('utf-8') for x in idx]
+        return list(idx)
+    return []
+
+
+def _read_h5_sparse_matrix(item):
+    """Reconstruct a dense array from a sparse h5py Group (CSR/CSC)."""
+    from scipy import sparse
+
+    if 'data' not in item or 'indices' not in item or 'indptr' not in item:
+        return None
+
+    data = item['data'][:]
+    indices = item['indices'][:]
+    indptr = item['indptr'][:]
+    shape = tuple(item.attrs.get('shape', []))
+
+    encoding = item.attrs.get('encoding-type', b'')
+    if isinstance(encoding, bytes):
+        encoding = encoding.decode('utf-8')
+
+    if 'csr' in encoding.lower() or (shape and shape[0] == len(indptr) - 1):
+        sp_mat = sparse.csr_matrix((data, indices, indptr), shape=shape)
+    else:
+        sp_mat = sparse.csc_matrix((data, indices, indptr), shape=shape)
+
+    return sp_mat.toarray()
+
+
 def setup_common_args(parser: argparse.ArgumentParser) -> None:
     """Add common arguments to a parser."""
     parser.add_argument(
@@ -396,68 +449,15 @@ def cmd_compare(args: argparse.Namespace) -> int:
             if 'X' in f:
                 x_item = f['X']
                 if isinstance(x_item, h5py.Dataset):
-                    # Dense matrix
                     result['X'] = x_item[:]
                 elif isinstance(x_item, h5py.Group):
-                    # Sparse matrix (CSR/CSC format from MuDataSeurat)
-                    # Check encoding type
-                    encoding = x_item.attrs.get('encoding-type', b'')
-                    if isinstance(encoding, bytes):
-                        encoding = encoding.decode('utf-8')
-
-                    if 'data' in x_item and 'indices' in x_item and 'indptr' in x_item:
-                        from scipy import sparse
-                        data = x_item['data'][:]
-                        indices = x_item['indices'][:]
-                        indptr = x_item['indptr'][:]
-                        shape = tuple(x_item.attrs.get('shape', []))
-
-                        if 'csr' in encoding.lower() or shape[0] == len(indptr) - 1:
-                            # CSR format
-                            sp_mat = sparse.csr_matrix((data, indices, indptr), shape=shape)
-                        else:
-                            # CSC format
-                            sp_mat = sparse.csc_matrix((data, indices, indptr), shape=shape)
-
-                        result['X'] = sp_mat.toarray()
-                    else:
+                    result['X'] = _read_h5_sparse_matrix(x_item)
+                    if result['X'] is None:
                         print("  Warning: Unknown sparse format in X group")
-                        result['X'] = None
 
-            # Get obs/var names - handle different formats
-            def get_index(group_name):
-                if group_name not in f:
-                    return []
-                grp = f[group_name]
-
-                # Try _index first
-                if '_index' in grp:
-                    idx = grp['_index'][:]
-                # Try index attribute
-                elif 'index' in grp.attrs:
-                    idx_name = grp.attrs['index']
-                    if isinstance(idx_name, bytes):
-                        idx_name = idx_name.decode('utf-8')
-                    if idx_name in grp:
-                        idx = grp[idx_name][:]
-                    else:
-                        idx = []
-                else:
-                    # Look for any dataset that might be the index
-                    idx = []
-                    for key in grp.keys():
-                        if key.startswith('_') or key == 'index':
-                            idx = grp[key][:]
-                            break
-
-                if len(idx) > 0:
-                    if isinstance(idx[0], bytes):
-                        idx = [x.decode('utf-8') for x in idx]
-                    return list(idx)
-                return []
-
-            result['obs_names'] = get_index('obs')
-            result['var_names'] = get_index('var')
+            # Get obs/var names
+            result['obs_names'] = _get_h5_index(f['obs']) if 'obs' in f else []
+            result['var_names'] = _get_h5_index(f['var']) if 'var' in f else []
 
             # Get obsm matrices (se, zscore, pvalue) - handle sparse
             if 'obsm' in f:
@@ -466,15 +466,9 @@ def cmd_compare(args: argparse.Namespace) -> int:
                     if isinstance(obsm_item, h5py.Dataset):
                         result['obsm_' + key] = obsm_item[:]
                     elif isinstance(obsm_item, h5py.Group):
-                        # Sparse obsm
-                        if 'data' in obsm_item and 'indices' in obsm_item and 'indptr' in obsm_item:
-                            from scipy import sparse
-                            data = obsm_item['data'][:]
-                            indices = obsm_item['indices'][:]
-                            indptr = obsm_item['indptr'][:]
-                            shape = tuple(obsm_item.attrs.get('shape', []))
-                            sp_mat = sparse.csr_matrix((data, indices, indptr), shape=shape)
-                            result['obsm_' + key] = sp_mat.toarray()
+                        mat = _read_h5_sparse_matrix(obsm_item)
+                        if mat is not None:
+                            result['obsm_' + key] = mat
 
             # Check for reductions (Seurat/MuDataSeurat format)
             if 'reductions' in f:
@@ -800,73 +794,21 @@ def cmd_convert(args: argparse.Namespace) -> int:
     print(f"Output: {args.output}")
     print("=" * 60)
 
-    def read_matrix(f, path):
-        """Read matrix from H5AD, handling both dense and sparse formats."""
+    def _read_h5_matrix(f, path):
+        """Read matrix from H5AD path, handling both dense and sparse formats."""
         if path not in f:
             return None
-
         item = f[path]
         if isinstance(item, h5py.Dataset):
-            # Dense matrix
             return item[:]
         elif isinstance(item, h5py.Group):
-            # Sparse matrix (CSR/CSC format)
-            if 'data' in item and 'indices' in item and 'indptr' in item:
-                from scipy import sparse
-                data = item['data'][:]
-                indices = item['indices'][:]
-                indptr = item['indptr'][:]
-                shape = tuple(item.attrs.get('shape', []))
-
-                # Determine format from encoding-type or shape
-                encoding = item.attrs.get('encoding-type', b'')
-                if isinstance(encoding, bytes):
-                    encoding = encoding.decode('utf-8')
-
-                if 'csr' in encoding.lower() or (shape and shape[0] == len(indptr) - 1):
-                    sp_mat = sparse.csr_matrix((data, indices, indptr), shape=shape)
-                else:
-                    sp_mat = sparse.csc_matrix((data, indices, indptr), shape=shape)
-
-                return sp_mat.toarray()
+            return _read_h5_sparse_matrix(item)
         return None
-
-    def get_index(f, group_name):
-        """Get index from obs or var group, handling different formats."""
-        if group_name not in f:
-            return []
-        grp = f[group_name]
-
-        # Try _index first
-        if '_index' in grp:
-            idx = grp['_index'][:]
-        # Try index attribute pointing to a dataset
-        elif 'index' in grp.attrs:
-            idx_name = grp.attrs['index']
-            if isinstance(idx_name, bytes):
-                idx_name = idx_name.decode('utf-8')
-            if idx_name in grp:
-                idx = grp[idx_name][:]
-            else:
-                idx = []
-        else:
-            # Look for any dataset that might be the index
-            idx = []
-            for key in grp.keys():
-                if key.startswith('_') or key == 'index':
-                    idx = grp[key][:]
-                    break
-
-        if len(idx) > 0:
-            if isinstance(idx[0], bytes):
-                idx = [x.decode('utf-8') for x in idx]
-            return list(idx)
-        return []
 
     # Read R-format H5AD using h5py directly
     with h5py.File(args.input, 'r') as f:
         # Get X matrix
-        X = read_matrix(f, 'X')
+        X = _read_h5_matrix(f, 'X')
         if X is None:
             print("Error: No X matrix found in file")
             return 1
@@ -874,8 +816,8 @@ def cmd_convert(args: argparse.Namespace) -> int:
         print(f"\nOriginal X shape: {X.shape}")
 
         # Get indices
-        obs_names = get_index(f, 'obs')
-        var_names = get_index(f, 'var')
+        obs_names = _get_h5_index(f['obs']) if 'obs' in f else []
+        var_names = _get_h5_index(f['var']) if 'var' in f else []
 
         print(f"obs_names: {len(obs_names)}")
         print(f"var_names: {len(var_names)}")
@@ -884,7 +826,7 @@ def cmd_convert(args: argparse.Namespace) -> int:
         obsm = {}
         if 'obsm' in f:
             for key in f['obsm'].keys():
-                mat = read_matrix(f, 'obsm/' + key)
+                mat = _read_h5_matrix(f, 'obsm/' + key)
                 if mat is not None:
                     obsm[key] = mat
                     print(f"obsm/{key}: {mat.shape}")

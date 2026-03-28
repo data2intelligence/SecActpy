@@ -28,7 +28,7 @@ Usage:
 
 import numpy as np
 import pandas as pd
-from typing import Optional, Any, Union, List
+from typing import Optional, Any, Union
 from pathlib import Path
 import warnings
 
@@ -158,8 +158,8 @@ def load_results(
 
 def results_to_dataframes(
     results: dict[str, Any],
-    feature_names: Optional[List[str]] = None,
-    sample_names: Optional[List[str]] = None
+    feature_names: Optional[list[str]] = None,
+    sample_names: Optional[list[str]] = None
 ) -> dict[str, pd.DataFrame]:
     """
     Convert results arrays to labeled pandas DataFrames.
@@ -214,8 +214,8 @@ def results_to_dataframes(
 
 def results_to_anndata(
     results: dict[str, Any],
-    feature_names: Optional[List[str]] = None,
-    sample_names: Optional[List[str]] = None,
+    feature_names: Optional[list[str]] = None,
+    sample_names: Optional[list[str]] = None,
     primary_layer: str = 'zscore'
 ) -> 'anndata.AnnData':
     """
@@ -324,8 +324,8 @@ def save_st_results_to_h5ad(
     counts,
     activity_results: dict[str, Any],
     output_path: Union[str, Path],
-    gene_names: Optional[List[str]] = None,
-    cell_names: Optional[List[str]] = None,
+    gene_names: Optional[list[str]] = None,
+    cell_names: Optional[list[str]] = None,
     spatial_coords: Optional[pd.DataFrame] = None,
     metadata: Optional[pd.DataFrame] = None,
     platform: str = "unknown"
@@ -718,8 +718,8 @@ def save_results(
     path: Union[str, Path],
     format: str = 'auto',
     compression: Optional[str] = 'gzip',
-    feature_names: Optional[List[str]] = None,
-    sample_names: Optional[List[str]] = None
+    feature_names: Optional[list[str]] = None,
+    sample_names: Optional[list[str]] = None
 ) -> None:
     """
     Save results to file.
@@ -767,8 +767,8 @@ def _save_hdf5(
     results: dict[str, Any],
     path: Path,
     compression: Optional[str],
-    feature_names: Optional[List[str]],
-    sample_names: Optional[List[str]]
+    feature_names: Optional[list[str]],
+    sample_names: Optional[list[str]]
 ) -> None:
     """Save results to HDF5."""
     if not H5PY_AVAILABLE:
@@ -798,8 +798,8 @@ def _save_hdf5(
 def _save_csv(
     results: dict[str, Any],
     path: Path,
-    feature_names: Optional[List[str]],
-    sample_names: Optional[List[str]]
+    feature_names: Optional[list[str]],
+    sample_names: Optional[list[str]]
 ) -> None:
     """Save results to CSV files (one per array)."""
     dfs = results_to_dataframes(results, feature_names, sample_names)
@@ -816,8 +816,8 @@ def _save_csv(
 def _save_parquet(
     results: dict[str, Any],
     path: Path,
-    feature_names: Optional[List[str]],
-    sample_names: Optional[List[str]]
+    feature_names: Optional[list[str]],
+    sample_names: Optional[list[str]]
 ) -> None:
     """Save results to Parquet files."""
     import importlib.util
@@ -837,8 +837,8 @@ def _save_parquet(
 def save_results_to_h5ad(
     results: dict[str, Any],
     path: Union[str, Path],
-    feature_names: Optional[List[str]] = None,
-    sample_names: Optional[List[str]] = None,
+    feature_names: Optional[list[str]] = None,
+    sample_names: Optional[list[str]] = None,
     compression: str = 'gzip',
     verbose: bool = False
 ) -> None:
@@ -935,8 +935,8 @@ def save_results_to_h5ad(
 def _save_with_anndata(
     results: dict[str, Any],
     path: Path,
-    feature_names: List[str],
-    sample_names: List[str],
+    feature_names: list[str],
+    sample_names: list[str],
     n_features: int,
     n_samples: int,
     compression: str,
@@ -987,8 +987,8 @@ def _save_with_anndata(
 def _save_with_h5py(
     results: dict[str, Any],
     path: Path,
-    feature_names: List[str],
-    sample_names: List[str],
+    feature_names: list[str],
+    sample_names: list[str],
     n_features: int,
     n_samples: int,
     compression: str,
@@ -1111,7 +1111,7 @@ def get_file_info(path: Union[str, Path]) -> dict[str, Any]:
 
 
 def concatenate_results(
-    result_files: List[Union[str, Path]],
+    result_files: list[Union[str, Path]],
     output_path: Optional[Union[str, Path]] = None,
     axis: int = 1
 ) -> Optional[dict[str, Any]]:
