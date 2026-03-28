@@ -137,6 +137,20 @@ from .io import (
     save_st_results_to_h5ad,
 )
 
+# Visualization (requires plotly)
+try:
+    from .visualization import (
+        activity_correlation,
+        activity_distribution,
+        celltype_activity_boxplot,
+        celltype_distribution,
+        celltype_expression_boxplot,
+        gene_expression_stats,
+        spatial_density,
+    )
+except ImportError:
+    pass  # plotly not installed — visualization functions unavailable
+
 # Lower-level ridge functions (for advanced users)
 from .ridge import (
     CUPY_AVAILABLE,
@@ -218,6 +232,14 @@ __all__ = [
     "concatenate_results",
     "save_st_results_to_h5ad",
     "add_activity_to_anndata",
+    # Visualization
+    "activity_distribution",
+    "celltype_activity_boxplot",
+    "activity_correlation",
+    "gene_expression_stats",
+    "celltype_expression_boxplot",
+    "celltype_distribution",
+    "spatial_density",
     # RNG and Caching
     "CStdlibRNG",
     "GSLRNG",
