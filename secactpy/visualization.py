@@ -147,8 +147,10 @@ def activity_correlation(
                 mode="lines", line=dict(color=_ACCENT, width=2),
                 showlegend=False,
             ), row=1, col=i)
+            xref_str = "x domain" if i == 1 else f"x{i} domain"
+            yref_str = "y domain" if i == 1 else f"y{i} domain"
             fig.add_annotation(
-                x=0.05, y=0.95, xref=f"x{i} domain", yref=f"y{i} domain",
+                x=0.05, y=0.95, xref=xref_str, yref=yref_str,
                 text=f"r={r:.3f}<br>n={len(x)}", showarrow=False,
                 font=dict(size=10), bgcolor="white",
             )
