@@ -65,6 +65,14 @@ docs = [
     "mkdocs-material>=9.0.0",
     "argparse-manpage",
 ]
+viz = [
+    "plotly>=5.14.0",
+]
+app = [
+    "plotly>=5.14.0",
+    "dash>=2.9.0",
+    "dash-bootstrap-components>=1.4.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/data2intelligence/SecActpy"
@@ -75,6 +83,7 @@ Issues = "https://github.com/data2intelligence/SecActpy/issues"
 
 [project.scripts]
 secactpy = "secactpy.cli:main"
+secactpy-app = "secactpy.app:run_app"
 
 [tool.setuptools]
 packages = ["secactpy", "secactpy.data"]
