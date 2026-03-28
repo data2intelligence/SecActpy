@@ -7,6 +7,8 @@ from dash import html
 from secactpy.app.config import UI_COLORS
 from secactpy.app.layouts.spatial import spatial_layout
 from secactpy.app.callbacks.spatial import register_spatial_callbacks
+from secactpy.app.layouts.inference import inference_layout
+from secactpy.app.callbacks.inference import register_inference_callbacks
 
 
 def create_app() -> dash.Dash:
@@ -29,8 +31,10 @@ def create_app() -> dash.Dash:
 
         dbc.Tabs([
             dbc.Tab(spatial_layout(), label="Spatial"),
+            dbc.Tab(inference_layout(), label="Run Inference"),
         ]),
     ])
 
     register_spatial_callbacks(app)
+    register_inference_callbacks(app)
     return app
