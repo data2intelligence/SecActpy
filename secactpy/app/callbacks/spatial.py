@@ -72,6 +72,36 @@ def register_spatial_callbacks(app):
     # Store the AnnData object in a module-level dict (Dash stores can't hold AnnData)
     _data_cache = {}
 
+    def _load_platform_zip(contents, platform):
+        """Extract a platform zip and load via spatial-gpu readers."""
+        content_type, content_string = contents.split(",")
+        decoded = base64.b64decode(content_string)
+
+        extract_dir = Path(tempfile.mkdtemp(prefix=f"{platform}_"))
+        zip_path = extract_dir / "upload.zip"
+        zip_path.write_bytes(decoded)
+
+        import zipfile
+        with zipfile.ZipFile(zip_path, "r") as z:
+            z.extractall(extract_dir / "data")
+
+        data_dir = extract_dir / "data"
+        # Find the actual output directory (may be nested)
+        subdirs = list(data_dir.iterdir())
+        if len(subdirs) == 1 and subdirs[0].is_dir():
+            data_dir = subdirs[0]
+
+        try:
+            from spatialgpu.io import read_visium, read_cosmx, read_xenium
+            readers = {"visium": read_visium, "cosmx": read_cosmx, "xenium": read_xenium}
+            return readers[platform](str(data_dir))
+        except ImportError:
+            # Fallback: try scanpy
+            import scanpy as sc
+            if platform == "visium":
+                return sc.read_visium(str(data_dir))
+            raise ImportError(f"spatial-gpu required for {platform} data loading")
+
     @app.callback(
         [Output("spatial-welcome", "style"),
          Output("spatial-plot-area", "style"),
@@ -81,12 +111,19 @@ def register_spatial_callbacks(app):
          Output("spatial-data-store", "data"),
          Output("spatial-inference-btn", "style")],
         [Input("spatial-demo-btn", "n_clicks"),
-         Input("spatial-upload", "contents")],
-        [State("spatial-upload", "filename")],
+         Input("spatial-upload", "contents"),
+         Input("spatial-visium-btn", "n_clicks"),
+         Input("spatial-cosmx-btn", "n_clicks"),
+         Input("spatial-xenium-btn", "n_clicks")],
+        [State("spatial-upload", "filename"),
+         State("spatial-visium-upload", "contents"),
+         State("spatial-cosmx-upload", "contents"),
+         State("spatial-xenium-upload", "contents")],
         prevent_initial_call=True,
     )
-    def load_data(demo_clicks, upload_contents, upload_filename):
-        """Load data from demo or upload."""
+    def load_data(demo_clicks, upload_contents, visium_clicks, cosmx_clicks, xenium_clicks,
+                  upload_filename, visium_contents, cosmx_contents, xenium_contents):
+        """Load data from demo, file upload, or platform-specific zip."""
         from dash import callback_context
         triggered = callback_context.triggered[0]["prop_id"]
 
@@ -94,37 +131,48 @@ def register_spatial_callbacks(app):
             adata = None
 
             if "demo-btn" in triggered:
-                # Try spatial-gpu demo data, fall back to scanpy
                 try:
-                    from spatialgpu.io import read_visium
-                    import spatialgpu
-                    demo_path = Path(spatialgpu.__file__).parent / "data"
-                    # If spatial-gpu has no bundled Visium, use scanpy
-                    raise FileNotFoundError("Use scanpy fallback")
-                except (ImportError, FileNotFoundError):
                     import scanpy as sc
                     adata = sc.datasets.visium_sge(sample_id="V1_Breast_Cancer_Block_A_Section_1")
                     adata.var_names_make_unique()
+                except Exception as e:
+                    return (no_update,) * 7
 
-            elif "upload" in triggered and upload_contents:
+            elif "spatial-upload" in triggered and upload_contents:
                 content_type, content_string = upload_contents.split(",")
                 decoded = base64.b64decode(content_string)
-                with tempfile.NamedTemporaryFile(suffix=".h5ad", delete=False) as f:
+                ext = upload_filename.rsplit(".", 1)[-1].lower() if upload_filename else ""
+                with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as f:
                     f.write(decoded)
                     tmp_path = f.name
-                import anndata as ad
-                adata = ad.read_h5ad(tmp_path)
+                if ext == "h5ad":
+                    import anndata as ad
+                    adata = ad.read_h5ad(tmp_path)
+                else:
+                    # CSV/TSV — assume genes x spots
+                    import anndata as ad
+                    sep = "," if ext == "csv" else "\t"
+                    df = pd.read_csv(tmp_path, index_col=0, sep=sep)
+                    adata = ad.AnnData(df.T)  # transpose to spots x genes
+
+            elif "visium-btn" in triggered and visium_contents:
+                adata = _load_platform_zip(visium_contents, "visium")
+
+            elif "cosmx-btn" in triggered and cosmx_contents:
+                adata = _load_platform_zip(cosmx_contents, "cosmx")
+
+            elif "xenium-btn" in triggered and xenium_contents:
+                adata = _load_platform_zip(xenium_contents, "xenium")
 
             if adata is None:
                 return (no_update,) * 7
 
             _data_cache["current"] = adata
 
-            # Build feature list from obs columns and top variable genes
+            # Build feature list
             features = []
             for col in adata.obs.columns:
                 features.append({"label": f"[obs] {col}", "value": col})
-            # Add top genes by variance
             if hasattr(adata.X, "toarray"):
                 variances = np.asarray(adata.X.toarray().var(axis=0))
             else:
@@ -136,13 +184,13 @@ def register_spatial_callbacks(app):
             default = features[0]["value"] if features else None
 
             return (
-                {"display": "none"},       # hide welcome
-                {"display": "block"},      # show plot area
-                {"display": "block"},      # show controls
+                {"display": "none"},
+                {"display": "block"},
+                {"display": "block"},
                 features,
                 default,
                 {"loaded": True, "n_obs": adata.n_obs, "n_vars": adata.n_vars},
-                {"display": "block"},      # show inference button
+                {"display": "block"},
             )
         except Exception as e:
             return (no_update,) * 7

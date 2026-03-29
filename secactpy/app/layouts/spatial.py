@@ -14,22 +14,80 @@ def spatial_layout():
                 dbc.Card([
                     dbc.CardHeader("Dataset", style={"color": UI_COLORS["primary"]}),
                     dbc.CardBody([
-                        dcc.Upload(
-                            id="spatial-upload",
-                            children=html.Div(["Drag & drop or ", html.A("select file")]),
-                            style={
-                                "borderWidth": "1px", "borderStyle": "dashed",
-                                "borderRadius": "5px", "textAlign": "center",
-                                "padding": "20px", "cursor": "pointer",
-                            },
-                        ),
-                        html.Small("Accepts .h5ad, .rds, .csv", className="text-muted"),
-                        html.Hr(),
-                        dbc.Button("Load Demo (Visium)", id="spatial-demo-btn",
-                                   color="info", className="w-100 mb-2"),
-                        dbc.Button("Run SecAct Inference", id="spatial-inference-btn",
-                                   color="warning", className="w-100",
-                                   style={"display": "none"}),
+                        dbc.Tabs([
+                            dbc.Tab(label="Upload", children=[
+                                html.Div([
+                                    dcc.Upload(
+                                        id="spatial-upload",
+                                        children=html.Div(["Drag & drop or ", html.A("select file")]),
+                                        style={
+                                            "borderWidth": "1px", "borderStyle": "dashed",
+                                            "borderRadius": "5px", "textAlign": "center",
+                                            "padding": "15px", "cursor": "pointer", "marginTop": "10px",
+                                        },
+                                    ),
+                                    html.Small("Accepts .h5ad, .rds, .csv", className="text-muted"),
+                                ]),
+                            ]),
+                            dbc.Tab(label="Visium", children=[
+                                html.Div([
+                                    dcc.Upload(
+                                        id="spatial-visium-upload",
+                                        children=html.Div(["Space Ranger output (.zip)"]),
+                                        style={
+                                            "borderWidth": "1px", "borderStyle": "dashed",
+                                            "borderRadius": "5px", "textAlign": "center",
+                                            "padding": "15px", "cursor": "pointer", "marginTop": "10px",
+                                        },
+                                    ),
+                                    dbc.Button("Load Visium", id="spatial-visium-btn",
+                                               color="primary", className="w-100 mt-2"),
+                                ]),
+                            ]),
+                            dbc.Tab(label="CosMx", children=[
+                                html.Div([
+                                    dcc.Upload(
+                                        id="spatial-cosmx-upload",
+                                        children=html.Div(["CosMx output (.zip)"]),
+                                        style={
+                                            "borderWidth": "1px", "borderStyle": "dashed",
+                                            "borderRadius": "5px", "textAlign": "center",
+                                            "padding": "15px", "cursor": "pointer", "marginTop": "10px",
+                                        },
+                                    ),
+                                    dbc.Button("Load CosMx", id="spatial-cosmx-btn",
+                                               color="primary", className="w-100 mt-2"),
+                                ]),
+                            ]),
+                            dbc.Tab(label="Xenium", children=[
+                                html.Div([
+                                    dcc.Upload(
+                                        id="spatial-xenium-upload",
+                                        children=html.Div(["Xenium output (.zip)"]),
+                                        style={
+                                            "borderWidth": "1px", "borderStyle": "dashed",
+                                            "borderRadius": "5px", "textAlign": "center",
+                                            "padding": "15px", "cursor": "pointer", "marginTop": "10px",
+                                        },
+                                    ),
+                                    dbc.Button("Load Xenium", id="spatial-xenium-btn",
+                                               color="primary", className="w-100 mt-2"),
+                                ]),
+                            ]),
+                            dbc.Tab(label="Demo", children=[
+                                html.Div([
+                                    html.P("Load bundled Visium demo dataset.",
+                                           className="text-muted mt-2"),
+                                    dbc.Button("Load Demo (Visium)", id="spatial-demo-btn",
+                                               color="info", className="w-100"),
+                                ]),
+                            ]),
+                        ], className="mt-1"),
+                        html.Div([
+                            dbc.Button("Run SecAct Inference", id="spatial-inference-btn",
+                                       color="warning", className="w-100 mt-3",
+                                       style={"display": "none"}),
+                        ]),
                     ]),
                 ], className="mb-3"),
                 dbc.Card([
