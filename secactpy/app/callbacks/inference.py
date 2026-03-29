@@ -1,6 +1,7 @@
 """Inference tab callbacks — upload, run secact_activity, display results."""
 
 import io
+import os
 import base64
 import tempfile
 
@@ -36,6 +37,7 @@ def register_inference_callbacks(app):
                     tmp_path = f.name
                 import anndata as ad
                 adata = ad.read_h5ad(tmp_path)
+                os.remove(tmp_path)
                 # Convert to DataFrame (genes x samples)
                 if hasattr(adata.X, "toarray"):
                     df = pd.DataFrame(adata.X.toarray().T,

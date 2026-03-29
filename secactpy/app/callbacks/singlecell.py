@@ -1,6 +1,7 @@
 """Single-cell tab callbacks — upload, run SC inference, visualize."""
 
 import base64
+import os
 import tempfile
 
 import numpy as np
@@ -34,6 +35,7 @@ def register_singlecell_callbacks(app):
                 tmp_path = f.name
             import anndata as ad
             adata = ad.read_h5ad(tmp_path)
+            os.remove(tmp_path)
             _sc_cache["adata"] = adata
             return False, {"uploaded": True, "n_obs": adata.n_obs, "n_vars": adata.n_vars}
         except Exception as e:

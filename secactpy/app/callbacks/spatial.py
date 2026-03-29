@@ -1,6 +1,7 @@
 """Spatial tab callbacks — wired to spatial-gpu I/O and secactpy visualization."""
 
 import io
+import os
 import base64
 import tempfile
 from pathlib import Path
@@ -148,11 +149,13 @@ def register_spatial_callbacks(app):
                 if ext == "h5ad":
                     import anndata as ad
                     adata = ad.read_h5ad(tmp_path)
+                    os.remove(tmp_path)
                 else:
                     # CSV/TSV — assume genes x spots
                     import anndata as ad
                     sep = "," if ext == "csv" else "\t"
                     df = pd.read_csv(tmp_path, index_col=0, sep=sep)
+                    os.remove(tmp_path)
                     adata = ad.AnnData(df.T)  # transpose to spots x genes
 
             elif "visium-btn" in triggered and visium_contents:
