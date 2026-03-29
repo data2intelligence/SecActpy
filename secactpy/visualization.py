@@ -20,6 +20,8 @@ __all__ = [
     "celltype_expression_boxplot",
     "celltype_distribution",
     "spatial_density",
+    "activity_change_bar",
+    "risk_lollipop",
 ]
 
 _PRIMARY = "#3498db"
@@ -271,6 +273,80 @@ def spatial_density(coordinates: pd.DataFrame) -> go.Figure:
         xaxis_title="X", yaxis_title="Y",
         yaxis=dict(scaleanchor="x", scaleratio=1),
         template="plotly_white",
+    )
+    return fig
+
+
+def activity_change_bar(
+    zscore: pd.Series,
+    n_top: int = 15,
+    title: str = "Activity Change",
+) -> go.Figure:
+    """Bar plot of top up- and down-regulated secreted proteins.
+
+    Parameters
+    ----------
+    zscore : Series
+        Activity change z-scores, indexed by protein name.
+    n_top : int
+        Number of top proteins to show from each direction.
+    title : str
+        Plot title.
+    """
+    sorted_z = zscore.sort_values()
+    top_down = sorted_z.head(n_top)
+    top_up = sorted_z.tail(n_top)
+    selected = pd.concat([top_down, top_up])
+
+    colors = [_ACCENT if v < 0 else _PRIMARY for v in selected.values]
+    fig = go.Figure(go.Bar(
+        x=selected.index.tolist(), y=selected.values,
+        marker_color=colors,
+    ))
+    fig.update_layout(
+        title=title,
+        xaxis_title="Secreted Protein",
+        yaxis_title="Activity Change (z-score)",
+        template="plotly_white",
+    )
+    return fig
+
+
+def risk_lollipop(
+    risk_scores: pd.Series,
+    n_top: int = 15,
+    title: str = "Risk Score",
+) -> go.Figure:
+    """Lollipop plot of top high/low risk secreted proteins.
+
+    Parameters
+    ----------
+    risk_scores : Series
+        Risk z-scores from Cox regression, indexed by protein.
+    n_top : int
+        Number of proteins from each tail.
+    title : str
+        Plot title.
+    """
+    sorted_r = risk_scores.sort_values()
+    selected = pd.concat([sorted_r.head(n_top), sorted_r.tail(n_top)])
+
+    fig = go.Figure()
+    colors = [_ACCENT if v > 0 else _PRIMARY for v in selected.values]
+    fig.add_trace(go.Scatter(
+        x=selected.values, y=selected.index.tolist(),
+        mode="markers", marker=dict(size=10, color=colors),
+        showlegend=False,
+    ))
+    for protein, val in selected.items():
+        fig.add_shape(type="line", x0=0, x1=val,
+                      y0=protein, y1=protein,
+                      line=dict(color="gray", width=1))
+    fig.update_layout(
+        title=title,
+        xaxis_title="Risk Score (z-score)",
+        template="plotly_white",
+        height=max(400, len(selected) * 20),
     )
     return fig
 

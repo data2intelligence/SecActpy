@@ -5,6 +5,8 @@ import dash_bootstrap_components as dbc
 from dash import html
 
 from secactpy.app.config import UI_COLORS
+from secactpy.app.layouts.bulk import bulk_layout
+from secactpy.app.callbacks.bulk import register_bulk_callbacks
 from secactpy.app.layouts.spatial import spatial_layout
 from secactpy.app.callbacks.spatial import register_spatial_callbacks
 from secactpy.app.layouts.inference import inference_layout
@@ -32,12 +34,14 @@ def create_app() -> dash.Dash:
         }),
 
         dbc.Tabs([
+            dbc.Tab(bulk_layout(), label="Bulk"),
             dbc.Tab(spatial_layout(), label="Spatial"),
             dbc.Tab(singlecell_layout(), label="Single Cell"),
             dbc.Tab(inference_layout(), label="Run Inference"),
         ]),
     ])
 
+    register_bulk_callbacks(app)
     register_spatial_callbacks(app)
     register_inference_callbacks(app)
     register_singlecell_callbacks(app)

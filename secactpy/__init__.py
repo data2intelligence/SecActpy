@@ -140,12 +140,14 @@ from .io import (
 # Visualization (requires plotly)
 try:
     from .visualization import (
+        activity_change_bar,
         activity_correlation,
         activity_distribution,
         celltype_activity_boxplot,
         celltype_distribution,
         celltype_expression_boxplot,
         gene_expression_stats,
+        risk_lollipop,
         spatial_density,
     )
 except ImportError:
@@ -240,6 +242,8 @@ __all__ = [
     "celltype_expression_boxplot",
     "celltype_distribution",
     "spatial_density",
+    "activity_change_bar",
+    "risk_lollipop",
     # RNG and Caching
     "CStdlibRNG",
     "GSLRNG",
