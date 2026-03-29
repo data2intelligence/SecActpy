@@ -160,6 +160,7 @@ try:
         signaling_pattern,
         signaling_pattern_gene,
         ccc_scrnaseq,
+        ccc_spatial,
     )
 except ImportError:
     pass
@@ -260,6 +261,7 @@ __all__ = [
     "signaling_pattern",
     "signaling_pattern_gene",
     "ccc_scrnaseq",
+    "ccc_spatial",
     # RNG and Caching
     "CStdlibRNG",
     "GSLRNG",
