@@ -11,6 +11,8 @@ need the full spatial stack).
 
 from __future__ import annotations
 
+import functools
+import warnings
 from typing import Optional, Union
 
 import numpy as np
@@ -30,6 +32,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # spatial-gpu availability check
 # ---------------------------------------------------------------------------
+@functools.lru_cache(maxsize=1)
 def _has_spatialgpu() -> bool:
     try:
         import spatialgpu.deconvolution  # noqa: F401
@@ -72,8 +75,9 @@ def coxph_regression(
         try:
             from spatialgpu.deconvolution.secact import secact_coxph_regression
             return secact_coxph_regression(activity, clinical)
-        except Exception:
-            pass  # fall through to standalone
+        except Exception as e:
+            warnings.warn(f"spatial-gpu delegation failed ({type(e).__name__}: {e}), using standalone")
+
 
     return _coxph_regression_standalone(activity, clinical)
 
@@ -178,15 +182,24 @@ def signaling_pattern(
     if _has_spatialgpu():
         try:
             from spatialgpu.deconvolution.secact import secact_signaling_patterns
-            # spatial-gpu takes AnnData; build a minimal one if needed
             import anndata as ad
+            # Build AnnData: spatial-gpu expects spots x genes orientation
             if isinstance(expression, pd.DataFrame):
-                adata = ad.AnnData(X=expression.T.values,
-                                   obs=coordinates, var=pd.DataFrame(index=expression.index))
-                adata.obsm["spatial"] = coordinates[["x", "y"]].values
-            result = secact_signaling_patterns(adata, k=k, radius=radius,
-                                               scale_factor=scale_factor)
-            # Extract results from AnnData uns
+                X = expression.T.values  # genes x spots → spots x genes
+                var = pd.DataFrame(index=expression.index)
+            elif sparse.issparse(expression):
+                X = expression.T  # transpose sparse
+                var = pd.DataFrame(index=range(expression.shape[0]))
+            else:
+                X = expression.T
+                var = pd.DataFrame(index=range(expression.shape[0]))
+
+            obs = pd.DataFrame(index=coordinates.index)
+            adata = ad.AnnData(X=X, obs=obs, var=var)
+            adata.obsm["spatial"] = coordinates[["x", "y"]].values
+
+            secact_signaling_patterns(adata, k=k, radius=radius,
+                                      scale_factor=scale_factor)
             secact_out = adata.uns.get("spacet", {}).get("SecAct_output", {})
             pattern = secact_out.get("pattern", {})
             return {
@@ -195,8 +208,9 @@ def signaling_pattern(
                 "signal_H": pattern.get("signal_H"),
                 "k": k if isinstance(k, int) else pattern.get("k", 0),
             }
-        except Exception:
-            pass  # fall through to standalone
+        except Exception as e:
+            warnings.warn(f"spatial-gpu delegation failed ({type(e).__name__}: {e}), using standalone")
+
 
     return _signaling_pattern_standalone(activity, coordinates, expression, k,
                                          radius, scale_factor, sigma, corr_p_cutoff)
@@ -368,6 +382,9 @@ def ccc_scrnaseq(
         cell_types = list(case_types & ctrl_types)
 
     lr_db = _load_lr_database()
+    if lr_db.empty:
+        warnings.warn("LR database not loaded (spatial-gpu not installed?). CCC results will be empty.")
+        return pd.DataFrame(columns=["sender", "receiver", "secretedProtein", "activity_z"])
     all_results = []
 
     for ct in cell_types:
@@ -507,8 +524,9 @@ def _find_column(df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
     return None
 
 
+@functools.lru_cache(maxsize=1)
 def _load_lr_database() -> pd.Series:
-    """Load ligand-receptor interaction database."""
+    """Load ligand-receptor interaction database. Cached after first call."""
     import importlib.resources
 
     try:
