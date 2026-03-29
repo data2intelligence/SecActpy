@@ -14,6 +14,11 @@ def register_inference_callbacks(app):
 
     _inference_cache = {}
 
+    def _evict_cache():
+        _inference_cache.clear()
+        import gc
+        gc.collect()
+
     @app.callback(
         [Output("inference-run-btn", "disabled"),
          Output("inference-data-store", "data")],
@@ -50,6 +55,7 @@ def register_inference_callbacks(app):
             else:
                 df = pd.read_csv(io.BytesIO(decoded), index_col=0, sep="\t")
 
+            _evict_cache()
             _inference_cache["expression"] = df
             return False, {"uploaded": True, "shape": list(df.shape), "filename": filename}
         except Exception as e:
@@ -60,7 +66,8 @@ def register_inference_callbacks(app):
          Output("inference-results-area", "style"),
          Output("inference-results-table", "data"),
          Output("inference-results-table", "columns"),
-         Output("inference-status", "children")],
+         Output("inference-status", "children"),
+         Output("inference-run-btn", "disabled")],
         Input("inference-run-btn", "n_clicks"),
         [State("inference-input-type", "value"),
          State("inference-data-store", "data")],
@@ -69,7 +76,7 @@ def register_inference_callbacks(app):
     def run_inference(n_clicks, input_type, data_store):
         """Run SecAct inference on uploaded data."""
         if not data_store or "expression" not in _inference_cache:
-            return (no_update,) * 5
+            return (no_update,) * 6
 
         try:
             from secactpy import secact_activity_inference
@@ -100,11 +107,12 @@ def register_inference_callbacks(app):
                     data,
                     columns,
                     "Inference complete!",
+                    False,  # re-enable button
                 )
             else:
-                return (no_update, no_update, [], [], "No results returned")
+                return (no_update, no_update, [], [], "No results returned", False)
         except Exception as e:
-            return (no_update, no_update, [], [], f"Error: {e}")
+            return (no_update, no_update, [], [], f"Error: {e}", False)
 
     @app.callback(
         Output("inference-download", "data"),

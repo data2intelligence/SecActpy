@@ -68,8 +68,14 @@ def _adata_to_spatial_figure(adata, color_key, spot_size=5):
 def register_spatial_callbacks(app):
     """Register all spatial tab callbacks."""
 
-    # Store the AnnData object in a module-level dict (Dash stores can't hold AnnData)
+    # Single-slot cache: stores only the current dataset. Previous data is evicted
+    # on each new upload to prevent unbounded memory growth.
     _data_cache = {}
+
+    def _evict_cache():
+        _data_cache.clear()
+        import gc
+        gc.collect()
 
     def _load_platform_zip(contents, platform):
         """Extract a platform zip and load via spatial-gpu readers."""
@@ -168,6 +174,7 @@ def register_spatial_callbacks(app):
             if adata is None:
                 return (no_update,) * 7
 
+            _evict_cache()
             _data_cache["current"] = adata
 
             # Build feature list

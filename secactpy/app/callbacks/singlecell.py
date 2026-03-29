@@ -16,6 +16,11 @@ def register_singlecell_callbacks(app):
 
     _sc_cache = {}
 
+    def _evict_cache():
+        _sc_cache.clear()
+        import gc
+        gc.collect()
+
     @app.callback(
         [Output("sc-run-btn", "disabled"),
          Output("sc-data-store", "data")],
@@ -35,6 +40,7 @@ def register_singlecell_callbacks(app):
             import anndata as ad
             adata = ad.read_h5ad(tmp_path)
             os.remove(tmp_path)
+            _evict_cache()
             _sc_cache["adata"] = adata
             return False, {"uploaded": True, "n_obs": adata.n_obs, "n_vars": adata.n_vars}
         except Exception as e:

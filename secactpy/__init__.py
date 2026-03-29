@@ -153,6 +153,9 @@ try:
 except ImportError:
     pass  # plotly not installed — visualization functions unavailable
 
+# GLM (logistic regression with Firth correction)
+from .glm import logistic_regression, logit
+
 # Downstream analysis (requires lifelines for Cox regression)
 try:
     from .downstream import (
@@ -262,6 +265,9 @@ __all__ = [
     "signaling_pattern_gene",
     "ccc_scrnaseq",
     "ccc_spatial",
+    # GLM
+    "logistic_regression",
+    "logit",
     # RNG and Caching
     "CStdlibRNG",
     "GSLRNG",

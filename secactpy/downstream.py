@@ -221,20 +221,27 @@ def _signaling_pattern_standalone(
     radius, scale_factor, sigma, corr_p_cutoff,
 ) -> dict:
     from sklearn.decomposition import NMF as NMFModel
-    from scipy.spatial.distance import cdist
+    from scipy.spatial import cKDTree
 
     common_spots = activity.columns.intersection(coordinates.index)
     act = activity[common_spots]
     coords = coordinates.loc[common_spots, ["x", "y"]].values
+    n = len(coords)
 
-    # Gaussian spatial weights
-    dist_mat = cdist(coords, coords)
-    weights = np.exp(-dist_mat ** 2 / (2 * sigma ** 2))
-    weights[dist_mat > radius] = 0
-    np.fill_diagonal(weights, 0)
-    row_sums = weights.sum(axis=1, keepdims=True)
+    # Gaussian spatial weights via KDTree (O(n log n) instead of O(n²))
+    tree = cKDTree(coords)
+    pairs = tree.query_pairs(r=radius, output_type="ndarray")
+    weights = sparse.lil_matrix((n, n))
+    for i, j in pairs:
+        d = np.linalg.norm(coords[i] - coords[j])
+        w = np.exp(-d ** 2 / (2 * sigma ** 2))
+        weights[i, j] = w
+        weights[j, i] = w
+    weights = weights.tocsr()
+    # Row-normalize
+    row_sums = np.array(weights.sum(axis=1)).ravel()
     row_sums[row_sums == 0] = 1
-    weights = weights / row_sums
+    weights = sparse.diags(1 / row_sums) @ weights
 
     # Normalize expression
     if isinstance(expression, pd.DataFrame):
