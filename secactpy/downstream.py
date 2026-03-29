@@ -371,9 +371,8 @@ def ccc_scrnaseq(
     DataFrame
         CCC interactions: sender, receiver, secretedProtein, activity_z.
     """
-    from secactpy import secact_activity_inference, load_signature
+    from secactpy import secact_activity_inference
 
-    sig = load_signature(sig_matrix)
     cell_types = list(adata.obs[cell_type_col].unique())
 
     if condition_col is not None:
@@ -401,9 +400,8 @@ def ccc_scrnaseq(
             continue
 
         # Pseudo-bulk expression
-        _mean = lambda a: np.asarray(a.X.mean(axis=0)).ravel() if sparse.issparse(a.X) else a.X.mean(axis=0)
-        expr_case = _mean(adata_case)
-        expr_ctrl = _mean(adata_ctrl)
+        expr_case = _pseudo_bulk_mean(adata_case)
+        expr_ctrl = _pseudo_bulk_mean(adata_ctrl)
 
         logfc = np.log2(expr_case + 1) - np.log2(expr_ctrl + 1)
         logfc_series = pd.Series(logfc, index=adata.var_names)
@@ -515,6 +513,13 @@ def ccc_spatial(
 # ===========================================================================
 # Helpers
 # ===========================================================================
+def _pseudo_bulk_mean(adata) -> np.ndarray:
+    """Compute mean expression per gene across cells, handling sparse matrices."""
+    if sparse.issparse(adata.X):
+        return np.asarray(adata.X.mean(axis=0)).ravel()
+    return np.asarray(adata.X.mean(axis=0)).ravel()
+
+
 def _find_column(df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
     """Find the first matching column name (case-insensitive)."""
     for c in candidates:

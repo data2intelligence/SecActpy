@@ -1,6 +1,5 @@
 """Spatial tab callbacks — wired to spatial-gpu I/O and secactpy visualization."""
 
-import io
 import os
 import base64
 import tempfile
@@ -135,7 +134,7 @@ def register_spatial_callbacks(app):
                     import scanpy as sc
                     adata = sc.datasets.visium_sge(sample_id="V1_Breast_Cancer_Block_A_Section_1")
                     adata.var_names_make_unique()
-                except Exception as e:
+                except Exception:
                     return (no_update,) * 7
 
             elif "spatial-upload" in triggered and upload_contents:
@@ -194,7 +193,7 @@ def register_spatial_callbacks(app):
                 {"loaded": True, "n_obs": adata.n_obs, "n_vars": adata.n_vars},
                 {"display": "block"},
             )
-        except Exception as e:
+        except Exception:
             return (no_update,) * 7
 
     @app.callback(

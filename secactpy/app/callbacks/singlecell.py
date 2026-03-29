@@ -4,7 +4,6 @@ import base64
 import os
 import tempfile
 
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from dash import Input, Output, State, no_update

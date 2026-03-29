@@ -1,7 +1,6 @@
 """Bulk analysis tab callbacks."""
 
 import io
-import os
 import base64
 
 import pandas as pd
@@ -177,8 +176,15 @@ def register_bulk_callbacks(app):
             fig = go.Figure()
             for group, label, color in [(high, "High", "#e74c3c"), (low, "Low", "#3498db")]:
                 times = clinical.loc[group, time_col].astype(float).sort_values()
+                events = clinical.loc[group, event_col].astype(int).loc[times.index]
                 n = len(times)
-                survival = [(n - i) / n for i in range(n)]
+                # Kaplan-Meier estimator
+                survival, s = [], 1.0
+                for i, (t, e) in enumerate(zip(times, events)):
+                    at_risk = n - i
+                    if e == 1 and at_risk > 0:
+                        s *= (at_risk - 1) / at_risk
+                    survival.append(s)
                 fig.add_trace(go.Scatter(x=times.values, y=survival,
                                           mode="lines", name=f"{label} (n={n})",
                                           line=dict(color=color)))
