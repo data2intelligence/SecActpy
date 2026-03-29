@@ -153,6 +153,17 @@ try:
 except ImportError:
     pass  # plotly not installed — visualization functions unavailable
 
+# Downstream analysis (requires lifelines for Cox regression)
+try:
+    from .downstream import (
+        coxph_regression,
+        signaling_pattern,
+        signaling_pattern_gene,
+        ccc_scrnaseq,
+    )
+except ImportError:
+    pass
+
 # Lower-level ridge functions (for advanced users)
 from .ridge import (
     CUPY_AVAILABLE,
@@ -244,6 +255,11 @@ __all__ = [
     "spatial_density",
     "activity_change_bar",
     "risk_lollipop",
+    # Downstream analysis
+    "coxph_regression",
+    "signaling_pattern",
+    "signaling_pattern_gene",
+    "ccc_scrnaseq",
     # RNG and Caching
     "CStdlibRNG",
     "GSLRNG",

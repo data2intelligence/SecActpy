@@ -68,6 +68,10 @@ docs = [
 viz = [
     "plotly>=5.14.0",
 ]
+downstream = [
+    "lifelines>=0.27.0",
+    "scikit-learn>=1.0.0",
+]
 app = [
     "plotly>=5.14.0",
     "dash>=2.9.0",
