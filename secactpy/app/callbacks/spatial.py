@@ -12,7 +12,6 @@ import plotly.graph_objects as go
 from dash import Input, Output, State, no_update
 
 from secactpy.app.utils import empty_figure
-from secactpy.app.config import UI_COLORS
 
 
 def _adata_to_spatial_figure(adata, color_key, spot_size=5):
