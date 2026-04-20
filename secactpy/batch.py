@@ -1026,7 +1026,7 @@ def ridge_batch(
     batch_size: int = 5000,
     backend: Literal["auto", "numpy", "cupy"] = "auto",
     use_gsl_rng: bool = True,
-    rng_method: str = None,
+    rng_method: str = "srand",
     use_cache: bool = False,
     output_path: Optional[str] = None,
     output_compression: Optional[str] = "gzip",

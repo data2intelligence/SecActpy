@@ -151,7 +151,7 @@ def ridge(
     seed: int = DEFAULT_SEED,
     backend: Literal["auto", "numpy", "cupy"] = "auto",
     use_gsl_rng: bool = True,
-    rng_method: Literal["srand", "gsl", "numpy", None] = None,
+    rng_method: Literal["srand", "gsl", "numpy", None] = "srand",
     use_cache: bool = False,
     sparse_mode: bool = False,
     col_center: bool = True,
@@ -1100,7 +1100,7 @@ def ridge_with_precomputed_T(
     n_rand: int = DEFAULT_NRAND,
     seed: int = DEFAULT_SEED,
     use_gsl_rng: bool = True,
-    rng_method: Literal["srand", "gsl", "numpy", None] = None,
+    rng_method: Literal["srand", "gsl", "numpy", None] = "srand",
 ) -> dict[str, np.ndarray]:
     """
     Ridge regression using precomputed projection matrix.
