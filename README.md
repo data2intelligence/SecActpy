@@ -11,7 +11,7 @@
 Python implementation of [SecAct](https://github.com/data2intelligence/SecAct) for inferring secreted protein activities from gene expression data.
 
 **Key Features:**
-- **SecAct Compatible**: Matches R SecAct/RidgeR results on the same platform (`rng_method='srand'`)
+- **SecAct Compatible**: Matches R SecAct (with RidgeFast/RidgeCuda accelerators) on the same platform (`rng_method='srand'`)
 - **GPU Acceleration**: Optional CuPy backend for large-scale analysis
 - **Million-Sample Scale**: Batch processing with streaming output for massive datasets
 - **Streaming H5AD**: Two-pass chunk reading for >5M-cell datasets without loading the full matrix (~3 GB peak vs ~200 GB)
@@ -307,10 +307,11 @@ See [CLI Reference](docs/cli.md) for all commands and options.
 ```bash
 docker pull psychemistz/secactpy:latest      # CPU
 docker pull psychemistz/secactpy:gpu          # GPU
-docker pull psychemistz/secactpy:with-r       # With R SecAct/RidgeR
+docker pull psychemistz/secactpy:with-r       # With R SecAct + RidgeFast (CPU acc)
+docker pull psychemistz/secactpy:gpu-with-r   # With R SecAct + RidgeFast + RidgeCuda (GPU acc)
 ```
 
-See [DOCKER.md](DOCKER.md) for detailed usage instructions.
+See [DOCKER.md](DOCKER.md) for Docker usage and [docs/installation.md](docs/installation.md#native-r-install-linux-macos-windows) for native R-side install on Linux/macOS/Windows.
 
 ## Reproducibility
 
@@ -318,7 +319,7 @@ SecActPy supports three RNG backends for different reproducibility needs:
 
 | `rng_method` | Description | Use case |
 |---|---|---|
-| `'srand'` | C stdlib `srand()`/`rand()` via ctypes | Match R SecAct/RidgeR results **on the same platform** |
+| `'srand'` | C stdlib `srand()`/`rand()` via ctypes | Match R SecAct (with RidgeFast/RidgeCuda) results **on the same platform** |
 | `'gsl'` | Mersenne Twister (GSL-compatible) | **Cross-platform** reproducibility within SecActPy |
 | `'numpy'` | Native NumPy RNG (~70x faster) | Fast analysis when reproducibility with R is not needed |
 
@@ -357,8 +358,9 @@ If you use SecActPy in your research, please cite:
 
 ## Related Projects
 
-- [SecAct](https://github.com/data2intelligence/SecAct) - Original R implementation
-- [RidgeR](https://github.com/beibeiru/RidgeR) - R ridge regression package
+- [SecAct](https://github.com/data2intelligence/SecAct) - Original R implementation (R-native)
+- [RidgeFast](https://github.com/data2intelligence/RidgeFast) - Optional CPU accelerator (R + C, cross-platform)
+- [RidgeCuda](https://github.com/data2intelligence/RidgeCuda) - Optional GPU accelerator (R + CUDA, Linux only)
 - [SpaCET](https://github.com/data2intelligence/SpaCET) - Spatial transcriptomics cell type analysis
 - [CytoSig](https://github.com/data2intelligence/CytoSig) - Cytokine signaling inference
 

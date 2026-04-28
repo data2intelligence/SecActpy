@@ -13,7 +13,10 @@ module load R
 
 cd /vf/users/parks34/projects/1ridgesig/SecActpy
 
-# Install SecAct from source if not already installed
+# Install SecAct from source + RidgeFast accelerator if not already installed.
+# RidgeFast is optional but matches the production Docker image, ensuring this
+# script reproduces the same numerics as `psychemistz/secactpy:with-r`.
+# RidgeFast itself depends on system GSL (apt: libgsl-dev / brew: gsl).
 Rscript -e '
 # Force install from local source to ensure latest version
 cat("Installing SecAct from local source...\n")
@@ -23,6 +26,24 @@ install.packages(
 )
 library(SecAct)
 cat("SecAct loaded. Functions:", paste(ls("package:SecAct"), collapse=", "), "\n")
+
+# Optional CPU accelerator (skip silently if unavailable so the script can
+# still run on a minimal R install — SecAct falls back to its pure-R path).
+if (!requireNamespace("remotes", quietly = TRUE)) {
+    install.packages("remotes", repos = "https://cloud.r-project.org/")
+}
+tryCatch({
+    if (!requireNamespace("RidgeFast", quietly = TRUE)) {
+        cat("Installing RidgeFast (CPU accelerator)...\n")
+        remotes::install_github("data2intelligence/RidgeFast",
+                                dependencies = NA, force = FALSE)
+    }
+    library(RidgeFast)
+    cat("RidgeFast", as.character(packageVersion("RidgeFast")), "loaded\n")
+}, error = function(e) {
+    message("RidgeFast install/load failed: ", conditionMessage(e))
+    message("Falling back to SecAct pure-R path (slower but correct).")
+})
 
 dataPath <- file.path(system.file(package = "SecAct"), "extdata")
 expr <- read.table(paste0(dataPath, "/Ly86-Fc_vs_Vehicle_logFC.txt"))

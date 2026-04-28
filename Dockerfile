@@ -1,7 +1,14 @@
 # =============================================================================
-# SecActPy + SecAct/RidgeR Unified Docker Image
+# SecActPy + SecAct Unified Docker Image
 #
-# Single Dockerfile for both CPU and GPU versions
+# Single Dockerfile for both CPU and GPU versions.
+#
+# R is optional. When INSTALL_R=true, SecAct (R native) is installed. The
+# ridge/permutation accelerator packages are also optional:
+#   - RidgeFast (CPU, cross-platform) — installed by default with R
+#   - RidgeCuda (GPU, Linux+CUDA only) — installed only when USE_GPU=true
+# Both can be force-disabled via INSTALL_RIDGEFAST=false / INSTALL_RIDGECUDA=false
+# to test SecAct's pure-R fallback path.
 #
 # Build CPU version (default, Python only):
 #   docker build -t secactpy:latest .
@@ -9,9 +16,16 @@
 # Build GPU version:
 #   docker build -t secactpy:gpu --build-arg USE_GPU=true .
 #
-# Build with R SecAct/RidgeR package (slower):
+# Build with R + SecAct + RidgeFast (CPU accelerator):
 #   docker build -t secactpy:with-r --build-arg INSTALL_R=true .
-#   docker build -t secactpy:gpu-with-r --build-arg USE_GPU=true --build-arg INSTALL_R=true .
+#
+# Build with R + SecAct + RidgeFast + RidgeCuda (GPU accelerator):
+#   docker build -t secactpy:gpu-with-r \
+#       --build-arg USE_GPU=true --build-arg INSTALL_R=true .
+#
+# Build with R + SecAct only (no accelerator, pure R fallback):
+#   docker build -t secactpy:with-r-pure \
+#       --build-arg INSTALL_R=true --build-arg INSTALL_RIDGEFAST=false .
 #
 # Run CPU:
 #   docker run -it --rm -v $(pwd):/workspace secactpy:latest
@@ -27,6 +41,9 @@
 # Build arguments
 ARG USE_GPU=false
 ARG INSTALL_R=false
+# Accelerator flags: "auto" defers to INSTALL_R / USE_GPU; "true"/"false" forces.
+ARG INSTALL_RIDGEFAST=auto
+ARG INSTALL_RIDGECUDA=auto
 ARG GITHUB_PAT=""
 
 # =============================================================================
@@ -157,7 +174,7 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
     fi
 
 # Install Bioconductor packages FIRST (required by CRAN packages like NMF,
-# and by SecAct, SpaCET, and RidgeR)
+# and by SecAct, SpaCET, RidgeFast, and RidgeCuda)
 ARG INSTALL_R
 RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
@@ -333,26 +350,70 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
               })"; \
     fi
 
-# Install RidgeR from GitHub (beibeiru/RidgeR)
+# Resolve accelerator flags: "auto" => INSTALL_R for RidgeFast,
+# (INSTALL_R && USE_GPU) for RidgeCuda. Stored as build env for later RUN steps.
 ARG INSTALL_R
-RUN if [ "$INSTALL_R" = "true" ]; then \
+ARG USE_GPU
+ARG INSTALL_RIDGEFAST
+ARG INSTALL_RIDGECUDA
+RUN set -e; \
+    if [ "$INSTALL_RIDGEFAST" = "auto" ]; then \
+        if [ "$INSTALL_R" = "true" ]; then RF=true; else RF=false; fi; \
+    else RF="$INSTALL_RIDGEFAST"; fi; \
+    if [ "$INSTALL_RIDGECUDA" = "auto" ]; then \
+        if [ "$INSTALL_R" = "true" ] && [ "$USE_GPU" = "true" ]; then RC=true; else RC=false; fi; \
+    else RC="$INSTALL_RIDGECUDA"; fi; \
+    echo "Resolved accelerator flags: RIDGEFAST=$RF RIDGECUDA=$RC" \
+        > /etc/secactpy.flags
+
+# Install RidgeFast from GitHub (data2intelligence/RidgeFast) — CPU accelerator
+# Cross-platform R+C package; depends on GSL (libgsl-dev installed above).
+ARG INSTALL_R
+RUN if [ "$INSTALL_R" = "true" ] && grep -q 'RIDGEFAST=true' /etc/secactpy.flags; then \
         echo "========================================" && \
-        echo "Installing RidgeR from GitHub..." && \
+        echo "Installing RidgeFast from GitHub..." && \
         echo "========================================" && \
         R -e "options(timeout = 600); \
               tryCatch({ \
-                  remotes::install_github('beibeiru/RidgeR', \
+                  remotes::install_github('data2intelligence/RidgeFast', \
                       dependencies = FALSE, force = TRUE); \
-                  library(RidgeR); \
-                  cat('RidgeR', as.character(packageVersion('RidgeR')), 'OK\n') \
+                  library(RidgeFast); \
+                  cat('RidgeFast', as.character(packageVersion('RidgeFast')), 'OK\n') \
               }, error = function(e) { \
                   message('First attempt failed: ', conditionMessage(e)); \
                   message('Retrying with dependencies...'); \
-                  remotes::install_github('beibeiru/RidgeR', \
+                  remotes::install_github('data2intelligence/RidgeFast', \
                       dependencies = NA, force = TRUE); \
-                  library(RidgeR); \
-                  cat('RidgeR', as.character(packageVersion('RidgeR')), 'OK (with deps)\n') \
+                  library(RidgeFast); \
+                  cat('RidgeFast', as.character(packageVersion('RidgeFast')), 'OK (with deps)\n') \
               })"; \
+    else \
+        echo "Skipping RidgeFast install"; \
+    fi
+
+# Install RidgeCuda from GitHub (data2intelligence/RidgeCuda) — GPU accelerator
+# Linux + NVIDIA CUDA only; uses the nvidia/cuda devel base when USE_GPU=true.
+ARG INSTALL_R
+RUN if [ "$INSTALL_R" = "true" ] && grep -q 'RIDGECUDA=true' /etc/secactpy.flags; then \
+        echo "========================================" && \
+        echo "Installing RidgeCuda from GitHub..." && \
+        echo "========================================" && \
+        R -e "options(timeout = 600); \
+              tryCatch({ \
+                  remotes::install_github('data2intelligence/RidgeCuda', \
+                      dependencies = FALSE, force = TRUE); \
+                  library(RidgeCuda); \
+                  cat('RidgeCuda', as.character(packageVersion('RidgeCuda')), 'OK\n') \
+              }, error = function(e) { \
+                  message('First attempt failed: ', conditionMessage(e)); \
+                  message('Retrying with dependencies...'); \
+                  remotes::install_github('data2intelligence/RidgeCuda', \
+                      dependencies = NA, force = TRUE); \
+                  library(RidgeCuda); \
+                  cat('RidgeCuda', as.character(packageVersion('RidgeCuda')), 'OK (with deps)\n') \
+              })"; \
+    else \
+        echo "Skipping RidgeCuda install"; \
     fi
 
 # Install SecAct from GitHub (data2intelligence/SecAct)
@@ -399,14 +460,21 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
               })"; \
     fi
 
-# Verify R installation (fail build if required packages are missing)
+# Verify R installation (fail build if required packages are missing).
+# SecAct + SpaCET are always required when INSTALL_R=true.
+# RidgeFast / RidgeCuda are required only when their respective flags resolved true.
 ARG INSTALL_R
 RUN if [ "$INSTALL_R" = "true" ]; then \
         echo "========================================" && \
         echo "Verifying R installation..." && \
         echo "========================================" && \
+        cat /etc/secactpy.flags && \
+        EXPECT_RF=$(grep -c 'RIDGEFAST=true' /etc/secactpy.flags || true) && \
+        EXPECT_RC=$(grep -c 'RIDGECUDA=true' /etc/secactpy.flags || true) && \
         R -e "cat('R version:', R.version.string, '\n'); \
-              required <- c('RidgeR', 'SecAct', 'SpaCET'); \
+              required <- c('SecAct', 'SpaCET'); \
+              if ($EXPECT_RF > 0) required <- c(required, 'RidgeFast'); \
+              if ($EXPECT_RC > 0) required <- c(required, 'RidgeCuda'); \
               all_ok <- TRUE; \
               for (pkg in required) { \
                   if (requireNamespace(pkg, quietly = TRUE)) { \

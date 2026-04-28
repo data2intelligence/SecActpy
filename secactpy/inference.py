@@ -463,7 +463,7 @@ def secact_activity(
         Set to 0 for faster t-test based inference.
     seed : int, default=0
         Random seed for reproducibility.
-        Use 0 for exact compatibility with RidgeR.
+        Use 0 for exact compatibility with R SecAct.
     scale : {"zscore", "center", "none"}, default="zscore"
         How to scale expression data before inference.
         - "zscore": Standardize each sample to mean=0, std=1
@@ -474,14 +474,14 @@ def secact_activity(
     min_genes : int, default=10
         Minimum number of overlapping genes required.
     use_gsl_rng : bool, default=True
-        Use GSL-compatible RNG for exact R/RidgeR reproducibility.
+        Use GSL-compatible RNG for exact R SecAct reproducibility.
         Set to False for faster inference (~70x faster permutation generation)
         when exact R matching is not needed.
         Ignored when ``rng_method`` is set.
     rng_method : {"srand", "gsl", "numpy", None}, default=None
         Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
 
-        - ``"srand"``: C stdlib srand/rand (matches R's RidgeR behavior)
+        - ``"srand"``: C stdlib srand/rand (matches R SecAct behavior)
         - ``"gsl"``: GSL random number generator
         - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
         - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility
@@ -549,7 +549,8 @@ def secact_activity(
     5. Compute significance via permutation testing
     6. Return results as labeled DataFrames
 
-    For compatibility with R's SecAct/RidgeR package, use the default
+    For compatibility with R SecAct (with optional RidgeFast/RidgeCuda
+    accelerators), use the default
     parameters (lambda_=5e5, n_rand=1000, seed=0, scale="zscore").
     """
     start_time = time.time()
@@ -767,7 +768,7 @@ def group_signatures(
     """
     Group similar signatures by Pearson correlation.
 
-    Matches R's .group_signatures function from RidgeR:
+    Matches R's .group_signatures function from SecAct:
     - Calculate correlation-based distance
     - Hierarchical clustering (complete linkage)
     - Cut tree at 1 - cor_threshold
@@ -854,7 +855,7 @@ def expand_rows(mat: pd.DataFrame) -> pd.DataFrame:
     """
     Expand rows with pipe-delimited names.
 
-    Matches R's .expand_rows function from RidgeR:
+    Matches R's .expand_rows function from SecAct:
     Expands rows where index contains "|" (grouped signatures) into
     separate rows with duplicated values.
 
@@ -1008,13 +1009,13 @@ def secact_activity_inference(
     backend : str, default="numpy"
         Computation backend ("numpy" or "cupy").
     use_gsl_rng : bool, default=True
-        Use GSL-compatible RNG for exact R/RidgeR reproducibility.
+        Use GSL-compatible RNG for exact R SecAct reproducibility.
         Set to False for faster inference when R matching is not needed.
         Ignored when ``rng_method`` is set.
     rng_method : {"srand", "gsl", "numpy", None}, default=None
         Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
 
-        - ``"srand"``: C stdlib srand/rand (matches R's RidgeR behavior)
+        - ``"srand"``: C stdlib srand/rand (matches R SecAct behavior)
         - ``"gsl"``: GSL random number generator
         - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
         - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility
@@ -1362,7 +1363,7 @@ def secact_activity_inference_scrnaseq(
     Cell State Activity Inference from Single Cell RNA-seq Data.
 
     Calculate secreted protein signaling activity from scRNA-seq data.
-    Matches R's RidgeR::SecAct.activity.inference.scRNAseq behavior.
+    Matches R SecAct's SecAct.activity.inference.scRNAseq behavior.
 
     Parameters
     ----------
@@ -1394,13 +1395,13 @@ def secact_activity_inference_scrnaseq(
     backend : str, default="auto"
         Computation backend: "auto", "numpy", "cupy".
     use_gsl_rng : bool, default=True
-        Use GSL-compatible RNG for exact R/RidgeR reproducibility.
+        Use GSL-compatible RNG for exact R SecAct reproducibility.
         Set to False for faster inference when R matching is not needed.
         Ignored when ``rng_method`` is set.
     rng_method : {"srand", "gsl", "numpy", None}, default=None
         Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
 
-        - ``"srand"``: C stdlib srand/rand (matches R's RidgeR behavior)
+        - ``"srand"``: C stdlib srand/rand (matches R SecAct behavior)
         - ``"gsl"``: GSL random number generator
         - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
         - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility
@@ -2020,7 +2021,7 @@ def secact_activity_inference_st(
     """
     Spot Activity Inference from Spatial Transcriptomics Data.
 
-    Matches R's RidgeR::SecAct.activity.inference.ST behavior.
+    Matches R SecAct's SecAct.activity.inference.ST behavior.
 
     Parameters
     ----------
@@ -2062,13 +2063,13 @@ def secact_activity_inference_st(
     backend : str, default="auto"
         Computation backend: "auto", "numpy", "cupy".
     use_gsl_rng : bool, default=True
-        Use GSL-compatible RNG for exact R/RidgeR reproducibility.
+        Use GSL-compatible RNG for exact R SecAct reproducibility.
         Set to False for faster inference when R matching is not needed.
         Ignored when ``rng_method`` is set.
     rng_method : {"srand", "gsl", "numpy", None}, default=None
         Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
 
-        - ``"srand"``: C stdlib srand/rand (matches R's RidgeR behavior)
+        - ``"srand"``: C stdlib srand/rand (matches R SecAct behavior)
         - ``"gsl"``: GSL random number generator
         - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
         - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility

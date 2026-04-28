@@ -1064,14 +1064,14 @@ def ridge_batch(
     backend : {"auto", "numpy", "cupy"}, default="auto"
         Computation backend.
     use_gsl_rng : bool, default=True
-        Use GSL-compatible RNG for exact R/RidgeR reproducibility.
+        Use GSL-compatible RNG for exact R SecAct reproducibility.
         Set to False for faster inference (~70x faster permutation
         generation) when R matching is not needed.
         Ignored when ``rng_method`` is set.
     rng_method : {"srand", "gsl", "numpy", None}, default=None
         Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
 
-        - ``"srand"``: C stdlib srand/rand (matches R's RidgeR behavior)
+        - ``"srand"``: C stdlib srand/rand (matches R SecAct behavior)
         - ``"gsl"``: GSL random number generator
         - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
         - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility

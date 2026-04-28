@@ -2,7 +2,7 @@
 Ridge regression with permutation-based significance testing.
 
 This module provides the core ridge regression algorithm with permutation
-testing for significance, matching RidgeR's output exactly.
+testing for significance, matching R SecAct's output exactly.
 
 Algorithm:
 ----------
@@ -17,7 +17,7 @@ Algorithm:
 The permutation p-value is computed as:
     p = (count(|β_rand| >= |β_obs|) + 1) / (n_rand + 1)
 
-This matches RidgeR's implementation exactly when using the same seed.
+This matches R SecAct's implementation exactly when using the same seed.
 
 Usage:
 ------
@@ -133,7 +133,7 @@ def _free_gpu_memory():
 # Tolerance for near-zero standard deviation
 EPS = 1e-12
 
-# Default parameters (matching RidgeR)
+# Default parameters (matching R SecAct)
 DEFAULT_LAMBDA = 5e5
 DEFAULT_NRAND = 1000
 DEFAULT_SEED = 0
@@ -178,20 +178,20 @@ def ridge(
         Number of permutations for significance testing.
         If 0, performs analytical t-test instead.
     seed : int, default=0
-        Random seed for permutations. Use 0 for RidgeR compatibility.
+        Random seed for permutations. Use 0 for R SecAct compatibility.
     backend : {"auto", "numpy", "cupy"}, default="auto"
         Computation backend.
         - "auto": Use CuPy if available, else NumPy
         - "numpy": Force CPU computation
         - "cupy": Force GPU computation (raises error if unavailable)
     use_gsl_rng : bool, default=True
-        Use GSL-compatible RNG for exact R/RidgeR reproducibility.
+        Use GSL-compatible RNG for exact R SecAct reproducibility.
         Set to False for faster inference (~70x faster) when R matching is not needed.
         Ignored when ``rng_method`` is set.
     rng_method : {"srand", "gsl", "numpy", None}, default=None
         Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
 
-        - ``"srand"``: C stdlib srand/rand (matches R's RidgeR behavior)
+        - ``"srand"``: C stdlib srand/rand (matches R SecAct behavior)
         - ``"gsl"``: GSL random number generator
         - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
         - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility
@@ -252,13 +252,13 @@ def ridge(
 
     Notes
     -----
-    Results are identical to RidgeR when using:
+    Results are identical to R SecAct when using:
     - Same seed (default: 0)
     - Same lambda value
     - Same number of permutations
 
     The algorithm uses Cholesky decomposition for numerical stability,
-    matching RidgeR's GSL-based implementation.
+    matching R SecAct's GSL-based implementation.
     """
     start_time = time.time()
 
@@ -357,7 +357,7 @@ def _ridge_permutation_numpy(
 
         T[:, inv_perm] @ Y == T @ Y[perm, :]
 
-    This produces identical results to RidgeR's Y-row permutation approach.
+    This produces identical results to R SecAct's Y-row permutation approach.
     """
     n_genes, n_features = X.shape
     n_samples = Y.shape[1]
@@ -428,7 +428,7 @@ def _ridge_permutation_numpy(
         aver += beta_perm
         aver_sq += beta_perm ** 2
 
-    # --- Step 4: Finalize statistics (matching RidgeR exactly) ---
+    # --- Step 4: Finalize statistics (matching R SecAct exactly) ---
     if verbose:
         print("  finalizing statistics...")
 
@@ -1123,7 +1123,7 @@ def ridge_with_precomputed_T(
     use_gsl_rng : bool, default=True
         Deprecated. Use rng_method instead.
     rng_method : {"srand", "gsl", "numpy", None}, default=None
-        RNG backend. "srand" matches R SecAct, "gsl" matches RidgeR GSL
+        RNG backend. "srand" matches R SecAct, "gsl" matches RidgeFast's GSL path
         (cross-platform reproducible), "numpy" is fast. None falls back
         to use_gsl_rng.
 

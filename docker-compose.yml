@@ -46,7 +46,7 @@ services:
               capabilities: [gpu]
 
   # ===========================================================================
-  # CPU + R Container (Python + R SecAct/RidgeR/SpaCET)
+  # CPU + R Container (Python + R SecAct + RidgeFast accelerator + SpaCET)
   # ===========================================================================
   secactpy-r:
     image: psychemistz/secactpy:with-r
@@ -59,7 +59,7 @@ services:
     tty: true
 
   # ===========================================================================
-  # GPU + R Container (Full stack)
+  # GPU + R Container (Full stack: SecAct + RidgeFast + RidgeCuda + SpaCET)
   # ===========================================================================
   secactpy-gpu-r:
     image: psychemistz/secactpy:gpu-with-r

@@ -2,14 +2,16 @@
 """
 Test Script: CPU Spatial Transcriptomics Inference Validation
 
-Validates SecActPy ST inference against RidgeR output.
+Validates SecActPy ST inference against R SecAct output.
 Tests Visium data by default, can also test CosMx with --cosmx flag.
 
 Dataset:
     - Visium_HCC (10X Visium hepatocellular carcinoma)
     - LIHC_CosMx_data.h5ad (single-cell resolution ST)
 
-Reference: R output from RidgeR::SecAct.activity.inference.ST
+Reference: R output from SecAct::SecAct.activity.inference.ST (with RidgeFast accelerator).
+Existing reference data was generated with legacy RidgeR; numerically equivalent
+to RidgeFast (max|diff| < 2e-14).
 
 Usage:
     python tests/test_st_cpu.py              # Visium dataset
@@ -607,7 +609,7 @@ def main(input_file=None, reference=None, cosmx=False, save_output=False):
             print("\n" + "=" * 70)
             if all_passed:
                 print("ALL TESTS PASSED! ✓")
-                print(f"SecActPy ST ({platform}) produces identical results to RidgeR.")
+                print(f"SecActPy ST ({platform}) produces identical results to R SecAct.")
             else:
                 print("SOME TESTS FAILED! ✗")
                 print("Check the detailed output above for discrepancies.")

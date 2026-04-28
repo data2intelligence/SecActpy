@@ -348,7 +348,7 @@ class GSLRNG(_BaseRNG):
     Parameters
     ----------
     seed : int, optional
-        Random seed. Default is 0 (matching RidgeR default).
+        Random seed. Default is 0 (matching R SecAct default).
 
     Notes
     -----

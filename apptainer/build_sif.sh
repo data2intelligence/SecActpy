@@ -137,9 +137,13 @@ for V in "${VARIANTS[@]}"; do
     apptainer exec "$SIF_FILE" python3 -c "import secactpy; print(f'SecActPy {secactpy.__version__} OK, GPU: {secactpy.CUPY_AVAILABLE}')"
 
     case "$V" in
-        *-r)
+        cpu-r)
             echo "Verifying R..."
-            apptainer exec "$SIF_FILE" R -e "cat('R version:', R.version.string, '\n'); library(SecAct); cat('SecAct OK\n'); library(RidgeR); cat('RidgeR OK\n')"
+            apptainer exec "$SIF_FILE" R -e "cat('R version:', R.version.string, '\n'); library(SecAct); cat('SecAct OK\n'); library(RidgeFast); cat('RidgeFast OK\n')"
+            ;;
+        gpu-r)
+            echo "Verifying R..."
+            apptainer exec "$SIF_FILE" R -e "cat('R version:', R.version.string, '\n'); library(SecAct); cat('SecAct OK\n'); library(RidgeFast); cat('RidgeFast OK\n'); library(RidgeCuda); cat('RidgeCuda OK\n')"
             ;;
     esac
 

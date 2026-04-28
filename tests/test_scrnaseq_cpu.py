@@ -2,13 +2,15 @@
 """
 Test Script: CPU scRNA-seq Inference Validation
 
-Validates SecActPy scRNA-seq inference against RidgeR output.
+Validates SecActPy scRNA-seq inference against R SecAct output.
 Tests both cell-type resolution (pseudo-bulk) and single-cell resolution.
 
 Supports both H5AD and TXT reference formats.
 
 Dataset: OV_scRNAseq_CD4.h5ad
-Reference: R output from RidgeR::SecAct.activity.inference.scRNAseq
+Reference: R output from SecAct::SecAct.activity.inference.scRNAseq (with RidgeFast accelerator).
+Existing reference data was generated with legacy RidgeR; numerically equivalent
+to RidgeFast (max|diff| < 2e-14).
 
 Usage:
     python tests/test_scrnaseq_cpu.py                  # Cell-type resolution
@@ -296,14 +298,15 @@ def main(input_file=None, reference=None, cell_type_col=None, single_cell=False,
         print("   Will run inference but skip validation.")
         print("   To generate R reference, run:")
         print("   ```R")
-        print("   library(RidgeR)")
+        print("   library(SecAct)")
+        print("   library(RidgeFast)  # optional CPU accelerator")
         print("   Seurat_obj <- readRDS('OV_scRNAseq_CD4.rds')")
         if single_cell:
             print("   Seurat_obj <- SecAct.activity.inference.scRNAseq(Seurat_obj, cellType_meta='Annotation', is_singleCell_level=TRUE)")
-            print("   RidgeR::write_secact_to_h5ad(Seurat_obj, 'dataset/output/signature/scRNAseq_sc_res/output.h5ad')")
+            print("   SecAct::write_secact_to_h5ad(Seurat_obj, 'dataset/output/signature/scRNAseq_sc_res/output.h5ad')")
         else:
             print("   Seurat_obj <- SecAct.activity.inference.scRNAseq(Seurat_obj, cellType_meta='Annotation')")
-            print("   RidgeR::write_secact_to_h5ad(Seurat_obj, 'dataset/output/signature/scRNAseq_ct_res/output.h5ad')")
+            print("   SecAct::write_secact_to_h5ad(Seurat_obj, 'dataset/output/signature/scRNAseq_ct_res/output.h5ad')")
         print("   ```")
         validate = False
 
@@ -406,7 +409,7 @@ def main(input_file=None, reference=None, cell_type_col=None, single_cell=False,
             print("\n" + "=" * 70)
             if all_passed:
                 print("ALL TESTS PASSED! ✓")
-                print(f"SecActPy scRNAseq ({resolution}) produces identical results to RidgeR.")
+                print(f"SecActPy scRNAseq ({resolution}) produces identical results to R SecAct.")
             else:
                 print("SOME TESTS FAILED! ✗")
                 print("Check the detailed output above for discrepancies.")

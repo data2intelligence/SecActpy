@@ -5,6 +5,31 @@ All notable changes to SecActPy will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Docker / R stack**: Replaced legacy `beibeiru/RidgeR` (now archived) with
+  optional accelerators `data2intelligence/RidgeFast` (CPU, cross-platform) and
+  `data2intelligence/RidgeCuda` (GPU, Linux+NVIDIA only).
+  - `INSTALL_R=true` now installs **SecAct + RidgeFast** by default. The
+    `with-r` image gains RidgeFast; the `gpu-with-r` image gains RidgeFast +
+    RidgeCuda. The legacy RidgeR is no longer installed in any image.
+  - New build args `INSTALL_RIDGEFAST` and `INSTALL_RIDGECUDA` (default `auto`)
+    let users force-disable the accelerators to test SecAct's pure-R fallback.
+  - `apptainer/build_sif.sh` verification now checks for `RidgeFast` (cpu-r) or
+    `RidgeFast` + `RidgeCuda` (gpu-r) instead of `RidgeR`.
+- Documentation: added native R install matrix for Linux / macOS / Windows in
+  `docs/installation.md` (`#native-r-install-linux-macos-windows`).
+- Docstrings across `secactpy/` updated from "RidgeR" → "R SecAct" / "RidgeFast"
+  where appropriate. Behavior is unchanged.
+
+### Migration notes
+- Reference H5AD files under `dataset/output/signature/*` were generated with
+  legacy RidgeR. They remain numerically valid (RidgeFast matches RidgeR to
+  better than `2e-14`), but to fully switch the source of truth, re-run
+  `sbatch scripts/regenerate_r_reference.sh` against the new image once it's
+  published. The script now installs RidgeFast automatically.
+
 ## [0.2.5] - 2026-02-26
 
 ### Added

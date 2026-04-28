@@ -5,13 +5,13 @@ offering different trade-offs between R compatibility and performance:
 
 | `rng_method` | Description | Use case |
 |---|---|---|
-| `'srand'` | C stdlib `srand()`/`rand()` via ctypes | Match R SecAct/RidgeR results **on the same platform** |
+| `'srand'` | C stdlib `srand()`/`rand()` via ctypes | Match R SecAct (with RidgeFast/RidgeCuda accelerators) results **on the same platform** |
 | `'gsl'` | Mersenne Twister (GSL-compatible) | **Cross-platform** reproducibility within SecActPy |
 | `'numpy'` | Native NumPy RNG (~70x faster) | Fast analysis when reproducibility with R is not needed |
 
-## Matching R SecAct/RidgeR output
+## Matching R SecAct output (with RidgeFast/RidgeCuda accelerators)
 
-To reproduce R SecAct/RidgeR results on the same machine, use `rng_method='srand'`.
+To reproduce R SecAct results on the same machine, use `rng_method='srand'`.
 This uses the C standard library's `rand()` function, which matches R's internal
 RNG on the same platform. Note that C `rand()` implementations differ across
 operating systems, so results are platform-dependent.

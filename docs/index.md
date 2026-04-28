@@ -12,7 +12,7 @@ Python implementation of [SecAct](https://github.com/data2intelligence/SecAct) f
 
 ## Key Features
 
-- **SecAct Compatible**: Matches R SecAct/RidgeR results on the same platform (`rng_method='srand'`)
+- **SecAct Compatible**: Matches R SecAct (with RidgeFast/RidgeCuda accelerators) on the same platform (`rng_method='srand'`)
 - **GPU Acceleration**: Optional CuPy backend for large-scale analysis
 - **Million-Sample Scale**: Batch processing with streaming output for massive datasets
 - **Built-in Signatures**: Includes SecAct and CytoSig signature matrices
@@ -48,8 +48,9 @@ If you use SecActPy in your research, please cite:
 
 ## Related Projects
 
-- [SecAct](https://github.com/data2intelligence/SecAct) — Original R implementation
-- [RidgeR](https://github.com/beibeiru/RidgeR) — R ridge regression package
+- [SecAct](https://github.com/data2intelligence/SecAct) — Original R implementation (R-native)
+- [RidgeFast](https://github.com/data2intelligence/RidgeFast) — Optional CPU accelerator (R + C, cross-platform)
+- [RidgeCuda](https://github.com/data2intelligence/RidgeCuda) — Optional GPU accelerator (R + CUDA, Linux only)
 - [SpaCET](https://github.com/data2intelligence/SpaCET) — Spatial transcriptomics cell type analysis
 - [CytoSig](https://github.com/data2intelligence/CytoSig) — Cytokine signaling inference
 

@@ -13,10 +13,10 @@ docker pull psychemistz/secactpy:latest
 # GPU version (Python + CuPy)
 docker pull psychemistz/secactpy:gpu
 
-# CPU + R version (Python + SecAct/RidgeR/SpaCET)
+# CPU + R version (Python + SecAct + RidgeFast accelerator + SpaCET)
 docker pull psychemistz/secactpy:with-r
 
-# GPU + R version (full stack)
+# GPU + R version (full stack: SecAct + RidgeFast + RidgeCuda + SpaCET)
 docker pull psychemistz/secactpy:gpu-with-r
 ```
 
@@ -41,16 +41,18 @@ docker build -t secactpy:gpu-with-r --build-arg USE_GPU=true --build-arg INSTALL
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `USE_GPU` | `false` | Set to `true` for GPU/CUDA support |
-| `INSTALL_R` | `false` | Set to `true` to include R and packages |
+| `INSTALL_R` | `false` | Set to `true` to include R + SecAct + SpaCET |
+| `INSTALL_RIDGEFAST` | `auto` | `auto`=follow `INSTALL_R`. CPU accelerator (cross-platform). Force `false` to use SecAct's pure-R fallback. |
+| `INSTALL_RIDGECUDA` | `auto` | `auto`=follow `INSTALL_R && USE_GPU`. GPU accelerator (Linux+NVIDIA only). |
 
 ## Available Docker Images
 
-| Tag | Python | GPU | R | Size | Use Case |
-|-----|--------|-----|---|------|----------|
-| `latest` / `cpu` | Yes | No | No | ~2 GB | General use |
-| `gpu` | Yes | Yes | No | ~6 GB | GPU acceleration |
-| `with-r` / `cpu-with-r` | Yes | No | Yes | ~3.5 GB | R cross-validation |
-| `gpu-with-r` | Yes | Yes | Yes | ~8 GB | Full stack |
+| Tag | Python | GPU | R | RidgeFast (CPU acc) | RidgeCuda (GPU acc) | Size | Use Case |
+|-----|--------|-----|---|---------------------|---------------------|------|----------|
+| `latest` / `cpu` | Yes | No | No | No | No | ~2 GB | General use |
+| `gpu` | Yes | Yes | No | No | No | ~6 GB | GPU acceleration |
+| `with-r` / `cpu-with-r` | Yes | No | Yes | Yes | No | ~3.5 GB | R cross-validation |
+| `gpu-with-r` | Yes | Yes | Yes | Yes | Yes | ~8 GB | Full stack |
 
 ## R Packages Included
 
@@ -79,10 +81,14 @@ When building with `INSTALL_R=true`, the following packages are installed. CRAN 
 - ComplexHeatmap, limma, UCell, BiRewire
 
 ### From GitHub (`remotes::install_github()`)
-- **RidgeR**: `beibeiru/RidgeR` -- Ridge regression with GSL RNG
-- **SecAct**: `data2intelligence/SecAct` -- Secreted protein activity inference
+- **SecAct**: `data2intelligence/SecAct` -- Secreted protein activity inference (R-native; always installed when `INSTALL_R=true`)
+- **RidgeFast**: `data2intelligence/RidgeFast` -- Optional CPU accelerator (R + C, cross-platform; installed by default with R)
+- **RidgeCuda**: `data2intelligence/RidgeCuda` -- Optional GPU accelerator (R + CUDA; installed only when `USE_GPU=true && INSTALL_R=true`)
 - **SpaCET**: `data2intelligence/SpaCET` -- Spatial transcriptomics cell type analysis
 - **MUDAN**: `JEFworks/MUDAN` -- Multi-scale Diffusion for Uniform Manifold Approximation (SpaCET dependency)
+
+!!! note
+    The legacy `beibeiru/RidgeR` package is archived and no longer installed. See [Native R install](installation.md#native-r-install-linux-macos-windows) for non-Docker setup on Linux/macOS/Windows.
 
 ## Running Containers
 
@@ -181,13 +187,15 @@ docker run --rm psychemistz/secactpy:with-r Rscript -e "
 cat('R version:', R.version.string, '\n')
 
 # Check packages
-for (pkg in c('SecAct', 'RidgeR', 'SpaCET', 'Biobase')) {
+for (pkg in c('SecAct', 'RidgeFast', 'SpaCET', 'Biobase')) {
     if (require(pkg, quietly = TRUE, character.only = TRUE)) {
         cat(pkg, 'OK -', as.character(packageVersion(pkg)), '\n')
     } else {
         cat(pkg, 'NOT FOUND\n')
     }
 }
+# RidgeCuda is GPU-only; check separately for the gpu-with-r image:
+# for (pkg in c('RidgeCuda')) { ... }
 "
 ```
 
@@ -272,7 +280,12 @@ print(f'GPU array: {x}')
 
 Performance comparison using Ly86 dataset (16,325 genes × 100 samples, 1,000 permutations).
 
-### R Backends (RidgeR)
+### R Backends (RidgeFast / legacy RidgeR)
+
+!!! note
+    Numbers below were measured against legacy RidgeR. RidgeFast uses the same
+    GSL/OpenMP code paths and produces numerically identical z-scores
+    (max|diff| < 2e-14), so per-backend timings are equivalent.
 
 | Backend | macOS Native | Docker (BLAS=1) | Docker (BLAS=8) |
 |---------|-------------|-----------------|-----------------|
@@ -305,12 +318,12 @@ Performance comparison using Ly86 dataset (16,325 genes × 100 samples, 1,000 pe
 
 ### Optimal Docker Configuration
 
-For best Docker performance, set `OPENBLAS_NUM_THREADS=1` and use multi-threaded RidgeR backends:
+For best Docker performance, set `OPENBLAS_NUM_THREADS=1` and use multi-threaded RidgeFast backends:
 
 ```bash
 docker run --rm -e OPENBLAS_NUM_THREADS=1 \
   -v $(pwd):/workspace psychemistz/secactpy:with-r \
-  Rscript -e "library(RidgeR); SecAct.inference.Tcol.mt(expr, ncores=8)"
+  Rscript -e "library(RidgeFast); SecAct.inference.Tcol.mt(expr, ncores=8)"
 ```
 
 This avoids thread oversubscription (OpenBLAS threads × OpenMP threads > CPU cores) which can cause severe performance degradation.
@@ -407,7 +420,7 @@ singularity exec secactpy_latest.sif python3 -c "import secactpy; print(secactpy
 singularity exec --bind /path/to/data:/data secactpy_latest.sif python3 your_script.py
 
 # Run R inside the container
-singularity exec secactpy_with-r.sif Rscript -e "library(SecAct); library(RidgeR); cat('OK\n')"
+singularity exec secactpy_with-r.sif Rscript -e "library(SecAct); library(RidgeFast); cat('OK\n')"
 ```
 
 !!! note

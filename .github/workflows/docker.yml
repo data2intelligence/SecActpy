@@ -230,10 +230,11 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ===========================================================================
-  # CPU + R Image (Python + R SecAct/RidgeR/SpaCET) - amd64 + arm64
+  # CPU + R Image (Python + R SecAct + RidgeFast accelerator + SpaCET) - amd64 + arm64
   # Only builds on release or manual trigger with build_r=true
   # Uses native ARM runner for arm64 to avoid QEMU emulation
-  # (arm64 R packages compile from source — no RSPM binaries available)
+  # (arm64 R packages compile from source — no RSPM binaries available;
+  #  RidgeFast itself is GitHub-only on every arch.)
   # ===========================================================================
   build-cpu-r:
     needs: [check-secrets]
@@ -364,8 +365,9 @@ jobs:
           docker buildx imagetools inspect "$REPO:with-r"
 
   # ===========================================================================
-  # GPU + R Image (Python + CuPy + R SecAct/RidgeR/SpaCET) - amd64 only
+  # GPU + R Image (Python + CuPy + R SecAct + RidgeFast + RidgeCuda + SpaCET) - amd64 only
   # Only builds on release or manual trigger with build_r=true
+  # RidgeCuda is auto-installed because USE_GPU=true && INSTALL_R=true.
   # ===========================================================================
   build-gpu-r:
     runs-on: ubuntu-latest

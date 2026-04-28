@@ -2,12 +2,14 @@
 """
 Test Script: CPU Bulk RNA-seq Inference Validation
 
-Validates SecActPy bulk RNA-seq inference against RidgeR output.
+Validates SecActPy bulk RNA-seq inference against R SecAct output.
 
 Supports both H5AD and TXT reference formats.
 
 Dataset: Ly86-Fc_vs_Vehicle_logFC.txt
-Reference: R output from RidgeR::SecAct.activity.inference
+Reference: R output from SecAct::SecAct.activity.inference (with RidgeFast accelerator).
+Existing reference data was generated with legacy RidgeR; numerically
+equivalent to RidgeFast (max|diff| < 2e-14).
 
 Usage:
     python tests/test_bulk_cpu.py
@@ -320,10 +322,11 @@ def main(input_file=None, reference=None, gene_col=None, validate=True, save_out
             print(f"   Warning: Reference output not found: {reference_path}")
             print("   To generate R reference, run:")
             print("   ```R")
-            print("   library(RidgeR)")
+            print("   library(SecAct)")
+            print("   library(RidgeFast)  # optional CPU accelerator")
             print("   Y <- read.delim('Ly86-Fc_vs_Vehicle_logFC.txt', row.names=1)")
             print("   res <- SecAct.activity.inference(Y, method='mttp')")
-            print("   RidgeR::write_secact_to_h5ad(res, 'dataset/output/signature/bulk/output.h5ad')")
+            print("   SecAct::write_secact_to_h5ad(res, 'dataset/output/signature/bulk/output.h5ad')")
             print("   ```")
             validate = False
 
@@ -405,7 +408,7 @@ def main(input_file=None, reference=None, gene_col=None, validate=True, save_out
             print("\n" + "=" * 70)
             if all_passed:
                 print("ALL TESTS PASSED! ✓")
-                print("SecActPy bulk produces identical results to RidgeR.")
+                print("SecActPy bulk produces identical results to R SecAct.")
             else:
                 print("SOME TESTS FAILED! ✗")
                 print("Check the detailed output above for discrepancies.")

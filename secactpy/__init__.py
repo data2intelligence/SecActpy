@@ -4,7 +4,8 @@ SecActPy: Secreted Protein Activity Inference
 A Python package for inferring secreted protein activity from
 gene expression data using ridge regression with permutation testing.
 
-Compatible with R's SecAct/RidgeR package - produces identical results.
+Compatible with R's SecAct package (with optional RidgeFast/RidgeCuda
+accelerators) — produces identical results.
 
 Quick Start (Bulk RNA-seq):
 ---------------------------
