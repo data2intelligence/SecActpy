@@ -128,19 +128,19 @@ def _logistic_regression_cpu(
 
         sqrt_W = np.sqrt(W)
         wX = X * sqrt_W[:, None]
-        I = wX.T @ wX
+        info = wX.T @ wX  # Fisher information matrix
 
         try:
-            L = linalg.cholesky(I, lower=True)
+            L = linalg.cholesky(info, lower=True)
         except linalg.LinAlgError:
             if verbose:
                 print("Cholesky failed on information matrix")
             return _fail_result(p, it, "numpy")
 
-        I_inv = linalg.cho_solve((L, True), np.eye(p))
+        info_inv = linalg.cho_solve((L, True), np.eye(p))
 
         if firth:
-            H_t = wX @ I_inv
+            H_t = wX @ info_inv
             H_diag = np.sum(H_t * wX, axis=1)
             error = error - H_diag * (P - 0.5)
 
@@ -155,7 +155,7 @@ def _logistic_regression_cpu(
         _apply_step_control(delta, beta, max_delta)
         beta = beta + delta
 
-    return _compute_stats(beta, I_inv, converged, n_iter, verbose, max_iter, U, "numpy")
+    return _compute_stats(beta, info_inv, converged, n_iter, verbose, max_iter, U, "numpy")
 
 
 def _logistic_regression_gpu(
@@ -189,20 +189,20 @@ def _logistic_regression_gpu(
 
         sqrt_W = cp.sqrt(W)
         wX = X_g * sqrt_W[:, None]
-        I = wX.T @ wX
+        info = wX.T @ wX  # Fisher information matrix
 
         try:
-            L = cp_linalg.cholesky(I)  # CuPy cholesky returns lower
+            L = cp_linalg.cholesky(info)  # CuPy cholesky returns lower
         except cp_linalg.LinAlgError:
             if verbose:
                 print("Cholesky failed on GPU")
             return _fail_result(p, it, "cupy")
 
         # Reuse Cholesky factor for solves
-        I_inv = cp_linalg.solve(L @ L.T, eye_p)
+        info_inv = cp_linalg.solve(L @ L.T, eye_p)
 
         if firth:
-            H_t = wX @ I_inv
+            H_t = wX @ info_inv
             H_diag = cp.sum(H_t * wX, axis=1)
             error = error - H_diag * (P - 0.5)
 
@@ -226,10 +226,10 @@ def _logistic_regression_gpu(
 
     # Transfer results back to CPU
     beta_np = cp.asnumpy(beta)
-    I_inv_np = cp.asnumpy(I_inv)
+    info_inv_np = cp.asnumpy(info_inv)
     U_np = cp.asnumpy(U) if not converged else None
 
-    return _compute_stats(beta_np, I_inv_np, converged, n_iter, verbose, max_iter, U_np, "cupy")
+    return _compute_stats(beta_np, info_inv_np, converged, n_iter, verbose, max_iter, U_np, "cupy")
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────
@@ -274,9 +274,9 @@ def _fail_result(p: int, n_iter: int, method: str) -> dict:
     }
 
 
-def _compute_stats(beta, I_inv, converged, n_iter, verbose, max_iter, U, method):
+def _compute_stats(beta, info_inv, converged, n_iter, verbose, max_iter, U, method):
     """Compute z-scores and p-values from final estimates."""
-    var_beta = np.diag(I_inv)
+    var_beta = np.diag(info_inv)
     stderr = np.sqrt(np.maximum(var_beta, 0))
     z = np.where(stderr > 0, beta / stderr, 0.0)
     pvalue = np.where(stderr > 0, 2 * (1 - stats.norm.cdf(np.abs(z))), 1.0)

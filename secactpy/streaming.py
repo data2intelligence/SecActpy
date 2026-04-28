@@ -725,7 +725,14 @@ def ridge_batch_streaming(
     buffer_n_cells = 0
 
     def _flush_buffer(buf_chunks, global_col_start):
-        """Process all cells in buffer as sub-batches."""
+        """Process all cells in buffer as sub-batches.
+
+        Closes over ``proj``, ``inv_perm_table``, ``sigma_all``,
+        ``mu_over_sigma_all`` from the enclosing function. Those names are
+        ``del``'d after the last call to this closure for memory reasons,
+        which confuses ruff's static analysis (F821) — runtime is fine
+        because every call happens before the dels.
+        """
         nonlocal n_batches_done
 
         if not buf_chunks:
@@ -748,17 +755,17 @@ def ridge_batch_streaming(
             abs_col_end = global_col_start + sub_end
             batch_stats = _PopulationStats(
                 mu=mu[abs_col_start:abs_col_end],
-                sigma=sigma_all[abs_col_start:abs_col_end],
-                mu_over_sigma=mu_over_sigma_all[abs_col_start:abs_col_end],
+                sigma=sigma_all[abs_col_start:abs_col_end],  # noqa: F821
+                mu_over_sigma=mu_over_sigma_all[abs_col_start:abs_col_end],  # noqa: F821
                 n_genes=n_genes,
                 row_means=row_means,
             )
 
             if use_gpu:
                 batch_result = _process_sparse_batch_cupy(
-                    proj.T, proj.c, Y_sub,
+                    proj.T, proj.c, Y_sub,  # noqa: F821
                     batch_stats.sigma, batch_stats.mu_over_sigma,
-                    inv_perm_table, n_rand,
+                    inv_perm_table, n_rand,  # noqa: F821
                     sparse_mode=sparse_mode,
                     row_means=batch_stats.row_means,
                     col_center=True,
@@ -767,9 +774,9 @@ def ridge_batch_streaming(
                 )
             else:
                 batch_result = _process_sparse_batch_numpy(
-                    proj.T, proj.c, Y_sub,
+                    proj.T, proj.c, Y_sub,  # noqa: F821
                     batch_stats.sigma, batch_stats.mu_over_sigma,
-                    inv_perm_table, n_rand,
+                    inv_perm_table, n_rand,  # noqa: F821
                     sparse_mode=sparse_mode,
                     row_means=batch_stats.row_means,
                     col_center=True,
