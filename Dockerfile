@@ -507,11 +507,14 @@ RUN pip3 install --no-cache-dir \
     jupyter \
     jupyterlab
 
-# Install CuPy for GPU version only
+# Install CuPy for GPU version only.
+# CUPY_PACKAGE must match the CUDA major version of the base image
+# (nvidia/cuda:11.8.0-... => cupy-cuda11x; nvidia/cuda:12.x-... => cupy-cuda12x).
 ARG USE_GPU
+ARG CUPY_PACKAGE=cupy-cuda11x
 RUN if [ "$USE_GPU" = "true" ]; then \
-        echo "Installing CuPy for GPU support..." && \
-        pip3 install --no-cache-dir cupy-cuda11x; \
+        echo "Installing CuPy for GPU support: $CUPY_PACKAGE" && \
+        pip3 install --no-cache-dir "$CUPY_PACKAGE"; \
     else \
         echo "Skipping CuPy (CPU-only build)"; \
     fi

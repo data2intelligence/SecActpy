@@ -44,6 +44,7 @@ docker build -t secactpy:gpu-with-r --build-arg USE_GPU=true --build-arg INSTALL
 | `INSTALL_R` | `false` | Set to `true` to include R + SecAct + SpaCET |
 | `INSTALL_RIDGEFAST` | `auto` | `auto`=follow `INSTALL_R`. CPU accelerator (cross-platform). Force `false` to use SecAct's pure-R fallback. |
 | `INSTALL_RIDGECUDA` | `auto` | `auto`=follow `INSTALL_R && USE_GPU`. GPU accelerator (Linux+NVIDIA only). |
+| `CUPY_PACKAGE` | `cupy-cuda11x` | PyPI name of CuPy. Must match the CUDA major version of the base image. Use `cupy-cuda12x` if bumping to a CUDA 12.x base. |
 
 ## Available Docker Images
 
