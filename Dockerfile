@@ -101,6 +101,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfftw3-dev \
     # For RcppParallel (Intel TBB)
     libtbb-dev \
+    # For R 'fs' package (transitive dep of shiny/plotly/DT/scatterpie/factoextra)
+    libuv1-dev \
     # BLAS/LAPACK (reference + OpenBLAS for multi-threaded linear algebra)
     libblas-dev \
     liblapack-dev \
