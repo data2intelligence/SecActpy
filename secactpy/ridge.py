@@ -79,7 +79,7 @@ def _get_rng(rng_method, use_gsl_rng, seed):
         return CStdlibRNG(seed), True
     return None, False
 
-__all__ = ['ridge', 'CUPY_AVAILABLE', 'resolve_backend']
+__all__ = ['ridge', 'CUPY_AVAILABLE', 'CUDA_NATIVE_AVAILABLE', 'resolve_backend']
 
 
 # =============================================================================
@@ -102,13 +102,38 @@ except Exception as e:
     # Store the error but don't warn yet - only warn when GPU is actually requested
     CUPY_INIT_ERROR = str(e)
 
+# cuda_native: Python ctypes wrapper around RidgeCuda's compiled CUDA
+# kernel. ~14× faster than the high-level CuPy path on small-m fixtures
+# (one cudaLaunchKernel for the entire 1000-perm sweep vs ~5000 individual
+# launches via Python+CuPy). Bit-equivalent to the CuPy backend on β/SE/z/p
+# when both share the same inverse permutation table.
+try:
+    from secactpy._cuda_native import (
+        ridge_dense as _ridge_dense_cuda_native,
+        CUDA_NATIVE_AVAILABLE,
+    )
+except Exception:
+    CUDA_NATIVE_AVAILABLE = False
+    _ridge_dense_cuda_native = None
+
+
+_BACKENDS = ("auto", "numpy", "cupy", "cuda_native")
+
 
 def resolve_backend(backend: str) -> str:
-    """Resolve backend string ('auto'/'numpy'/'cupy') and validate availability."""
-    if backend not in ("auto", "numpy", "cupy"):
-        raise ValueError(f"Unknown backend: {backend!r}. Choose from: 'auto', 'numpy', 'cupy'")
+    """Resolve backend string and validate availability.
+
+    auto preference order: cuda_native > cupy > numpy.
+    """
+    if backend not in _BACKENDS:
+        raise ValueError(
+            f"Unknown backend: {backend!r}. Choose from: {_BACKENDS!r}")
     if backend == "auto":
-        return "cupy" if CUPY_AVAILABLE else "numpy"
+        if CUDA_NATIVE_AVAILABLE:
+            return "cuda_native"
+        if CUPY_AVAILABLE:
+            return "cupy"
+        return "numpy"
     if backend == "cupy" and not CUPY_AVAILABLE:
         error_msg = "CuPy backend requested but not available."
         if CUPY_INIT_ERROR:
@@ -116,6 +141,12 @@ def resolve_backend(backend: str) -> str:
         else:
             error_msg += " Install CuPy with: pip install cupy-cuda11x (or cupy-cuda12x)"
         raise ImportError(error_msg)
+    if backend == "cuda_native" and not CUDA_NATIVE_AVAILABLE:
+        raise ImportError(
+            "cuda_native backend requested but libridgecuda_native.so not "
+            "found. Build it: see ridge-bench/backends/cuda_native/Makefile, "
+            "then place at secactpy/_libs/libridgecuda_native.so or set "
+            "SECACTPY_CUDA_NATIVE_LIB.")
     return backend
 
 
@@ -149,7 +180,7 @@ def ridge(
     lambda_: float = DEFAULT_LAMBDA,
     n_rand: int = DEFAULT_NRAND,
     seed: int = DEFAULT_SEED,
-    backend: Literal["auto", "numpy", "cupy"] = "auto",
+    backend: Literal["auto", "numpy", "cupy", "cuda_native"] = "auto",
     use_gsl_rng: bool = True,
     rng_method: Literal["srand", "gsl", "numpy", None] = "srand",
     use_cache: bool = False,
@@ -312,10 +343,13 @@ def ridge(
         is_sparse_Y = False
 
     if is_sparse_Y:
-        if backend == "cupy":
+        # cuda_native is dense-only; sparse keeps the existing routes.
+        if backend in ("cupy", "cuda_native"):
             result = _ridge_sparse_cupy(X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method, use_cache, verbose, col_center=col_center, col_scale=col_scale)
         else:
             result = _ridge_sparse_permutation_numpy(X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method, use_cache, verbose, col_center=col_center, col_scale=col_scale)
+    elif backend == "cuda_native":
+        result = _ridge_cuda_native_dense(X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method, use_cache, verbose)
     elif backend == "cupy":
         result = _ridge_cupy(X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method, use_cache, verbose)
     else:
@@ -544,6 +578,55 @@ def _ridge_ttest_numpy(
 # CuPy Backend
 # =============================================================================
 
+def _ridge_cuda_native_dense(
+    X: np.ndarray,
+    Y: np.ndarray,
+    lambda_: float,
+    n_rand: int,
+    seed: int,
+    use_gsl_rng: bool,
+    rng_method: str,
+    use_cache: bool,
+    verbose: bool,
+) -> dict[str, np.ndarray]:
+    """Dense ridge via the compiled CUDA kernel (libridgecuda_native.so).
+
+    Bit-equivalent to _ridge_cupy on β/SE/z/p when both share the same
+    inverse permutation table — which they do by construction (same
+    SecActpy CStdlibRNG / GSLRNG class produces the table). Provides
+    ~14× speedup at small m vs the high-level CuPy path by replacing
+    the Python+CuPy per-iter dispatch with a single cudaLaunchKernel.
+
+    Falls back via ImportError (caller catches) if the .so isn't
+    available; resolve_backend already gates that case.
+    """
+    if n_rand == 0:
+        raise NotImplementedError(
+            "t-test (n_rand=0) not implemented for cuda_native; "
+            "use backend='numpy' for t-test.")
+
+    # Generate inverse permutation table on CPU (same code path the CuPy
+    # backend uses — guarantees the kernel sees the same permutations).
+    rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
+    if use_deterministic:
+        if use_cache:
+            inv_perm_table = get_cached_inverse_perm_table(
+                X.shape[0], n_rand, seed, verbose=verbose)
+        else:
+            inv_perm_table = rng_obj.inverse_permutation_table(X.shape[0], n_rand)
+    else:
+        inv_perm_table = generate_inverse_permutation_table_fast(
+            X.shape[0], n_rand, seed)
+
+    if verbose:
+        print(f"  cuda_native: dispatching to libridgecuda_native.so "
+              f"({n_rand} permutations, single cudaLaunchKernel)")
+
+    return _ridge_dense_cuda_native(
+        X, Y, lambda_, n_rand,
+        inv_perm_table=inv_perm_table)
+
+
 def _ridge_cupy(
     X: np.ndarray,
     Y: np.ndarray,
@@ -643,29 +726,52 @@ def _ridge_cupy(
     pvalue_counts = cp.zeros((n_features, n_samples), dtype=cp.float64)
     abs_beta = cp.abs(beta_gpu)
 
-    # Optimization (2026-04-30): batch H2D upload of the entire permutation
-    # table + remove per-iter free_all_blocks(). Each iter previously did
-    # one H2D copy (~50 μs launch overhead) and the per-batch
-    # free_all_blocks() forced a CUDA sync that serialized the device.
-    # At small m these overheads dominate the actual dgemm. Moving them
-    # outside the hot loop is a pure memory-management optimization;
-    # the math + operand order inside each iter is unchanged so output
-    # is bit-identical to the prior implementation (verified by parity
-    # test against pure-R, max|Δβ| ≤ 1e-10).
+    # Optimization (2026-04-30): batch H2D upload + CUDA Graph capture of
+    # the per-iter sequence + replay for all n_rand iters. Eliminates
+    # ~5000 per-iter Python→CuPy→cudaLaunchKernel dispatch calls — the
+    # dominant cost at small m. Falls back to plain loop on older CuPy
+    # versions or driver/runtime that don't support stream capture.
+    #
+    # Pre-allocated scratch lets the captured graph hit the same memory
+    # addresses on every replay (CUDA Graphs require this). The math +
+    # operand order inside each iter is unchanged from the loop variant,
+    # so output is bit-identical (verified by ridge-bench's
+    # tests/test_secactpy_cupy_parity.py).
     inv_perm_table_gpu = cp.asarray(inv_perm_table, dtype=cp.intp)
+    T_perm_buf    = cp.empty((n_features, n_genes),   dtype=cp.float64)
+    beta_perm_buf = cp.empty((n_features, n_samples), dtype=cp.float64)
 
-    for i in range(n_rand):
-        # T[:, inv_perm[i]] @ Y_gpu — fancy index on prebuilt GPU table.
-        T_perm = T_gpu[:, inv_perm_table_gpu[i]]
-        beta_perm = T_perm @ Y_gpu
+    def _perm_loop():
+        """Body shared by graph-capture and fallback paths."""
+        for i in range(n_rand):
+            cp.take(T_gpu, inv_perm_table_gpu[i], axis=1, out=T_perm_buf)
+            cp.matmul(T_perm_buf, Y_gpu, out=beta_perm_buf)
+            pvalue_counts[...] = pvalue_counts + \
+                (cp.abs(beta_perm_buf) >= abs_beta).astype(cp.float64)
+            aver[...]    = aver + beta_perm_buf
+            aver_sq[...] = aver_sq + beta_perm_buf * beta_perm_buf
 
-        pvalue_counts += (cp.abs(beta_perm) >= abs_beta).astype(cp.float64)
-        aver += beta_perm
-        aver_sq += beta_perm ** 2
+    used_graph = False
+    try:
+        # CuPy stream capture → one cudaGraphLaunch replaces ~5000 individual
+        # cudaLaunchKernel calls. Requires CUDA ≥10.0 + CuPy ≥9.
+        stream = cp.cuda.Stream(non_blocking=True)
+        with stream:
+            stream.begin_capture()
+            _perm_loop()
+            graph = stream.end_capture()
+        graph.launch()
+        cp.cuda.Stream.null.synchronize()
+        used_graph = True
+    except Exception as exc:
+        if verbose:
+            print(f"  CUDA Graph capture failed ({type(exc).__name__}: {exc}); "
+                  "falling back to plain loop.")
+        # Reset accumulators in case capture wrote partial state.
+        aver.fill(0.0); aver_sq.fill(0.0); pvalue_counts.fill(0.0)
+        _perm_loop()
 
-        del T_perm, beta_perm
-
-    del inv_perm_table_gpu
+    del inv_perm_table_gpu, T_perm_buf, beta_perm_buf
     cp.get_default_memory_pool().free_all_blocks()
     cp.get_default_pinned_memory_pool().free_all_blocks()
 
