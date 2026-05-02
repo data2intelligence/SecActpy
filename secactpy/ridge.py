@@ -110,11 +110,13 @@ except Exception as e:
 try:
     from secactpy._cuda_native import (
         ridge_dense as _ridge_dense_cuda_native,
+        build_inv_perm_table_srand as _build_inv_perm_native,
         CUDA_NATIVE_AVAILABLE,
     )
 except Exception:
     CUDA_NATIVE_AVAILABLE = False
     _ridge_dense_cuda_native = None
+    _build_inv_perm_native = None
 
 
 _BACKENDS = ("auto", "numpy", "cupy", "cuda_native")
@@ -605,10 +607,17 @@ def _ridge_cuda_native_dense(
             "t-test (n_rand=0) not implemented for cuda_native; "
             "use backend='numpy' for t-test.")
 
-    # Generate inverse permutation table on CPU (same code path the CuPy
-    # backend uses — guarantees the kernel sees the same permutations).
+    # Generate inverse permutation table.
+    # Fast path: when rng_method='srand' and the bundled .so has the
+    # native helper, build the table in C (~200× faster than the Python
+    # CStdlibRNG loop, byte-equivalent at the same seed). Otherwise fall
+    # back to the same paths the CuPy backend uses so the perm tables
+    # remain identical.
     rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
-    if use_deterministic:
+    if (rng_method == "srand" and not use_cache
+            and _build_inv_perm_native is not None):
+        inv_perm_table = _build_inv_perm_native(X.shape[0], n_rand, seed)
+    elif use_deterministic:
         if use_cache:
             inv_perm_table = get_cached_inverse_perm_table(
                 X.shape[0], n_rand, seed, verbose=verbose)

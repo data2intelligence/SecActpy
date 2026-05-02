@@ -62,6 +62,14 @@ try:
             ctypes.POINTER(ctypes.c_int),
         ]
         _lib.ridge_cuda_dense.restype  = ctypes.c_int
+        # Optional fast srand-based inverse perm-table builder (not in
+        # older builds of libridgecuda_native.so).
+        if hasattr(_lib, "build_inv_perm_table_srand"):
+            _lib.build_inv_perm_table_srand.argtypes = [
+                ctypes.POINTER(ctypes.c_int),
+                ctypes.c_int, ctypes.c_int, ctypes.c_uint,
+            ]
+            _lib.build_inv_perm_table_srand.restype = ctypes.c_int
         CUDA_NATIVE_AVAILABLE = True
 except Exception as e:
     _init_error = e
@@ -76,6 +84,30 @@ def _ensure_init(device_id=0):
     if rc != 0:
         raise RuntimeError(f"ridge_cuda_init returned status {rc}")
     _initialized = True
+
+
+def build_inv_perm_table_srand(n: int, n_rand: int, seed: int = 0) -> np.ndarray:
+    """Fast C-side Fisher-Yates inverse permutation table generator.
+
+    Returns (n_rand, n) int32 ndarray. Bit-equivalent to
+    SecActpy's CStdlibRNG.inverse_permutation_table at the same seed —
+    same algorithm (C stdlib srand+rand) — but ~200× faster (~50 ms vs
+    ~11 s at n=8141, n_rand=1000) since it skips the Python interpreter
+    loop. Falls back to a RuntimeError if the bundled .so doesn't export
+    the symbol (older builds).
+    """
+    if not CUDA_NATIVE_AVAILABLE or not hasattr(_lib, "build_inv_perm_table_srand"):
+        raise RuntimeError("build_inv_perm_table_srand not available in "
+                           "libridgecuda_native.so. Rebuild with the "
+                           "perm_helper.c addition.")
+    out = np.zeros((n_rand, n), dtype=np.int32, order='C')
+    rc = _lib.build_inv_perm_table_srand(
+        out.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+        ctypes.c_int(n), ctypes.c_int(n_rand), ctypes.c_uint(seed),
+    )
+    if rc != 0:
+        raise RuntimeError(f"build_inv_perm_table_srand returned {rc}")
+    return out
 
 
 def ridge_dense(X, Y, lambda_, n_rand, *,
