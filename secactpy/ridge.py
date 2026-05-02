@@ -422,12 +422,14 @@ def _ridge_permutation_numpy(
 
     beta = T @ Y  # (n_features, n_samples)
 
-    # --- Step 3: Permutation testing with T-column permutation ---
-    if verbose:
-        print(f"  running {n_rand} permutations (T-column method)...")
+    # --- Step 3: Permutation testing ---
+    # Auto-pick Y-row vs T-col based on operand sizes. T-col copies
+    # T (n_features × n_genes) per iter; Y-row copies Y (n_genes × n_samples).
+    # At m << p the Y-row variant moves ~p/m × less memory. Pure-R uses
+    # Y-row, so this also closes the per-iter gap that made python_numpy
+    # appear ~3× slower than .ridge_pureR on small fixtures.
+    use_yrow = n_samples < n_features
 
-    # Generate inverse permutation table for T-column permutation
-    # T[:, inv_perm] @ Y == T @ Y[perm, :] (mathematically equivalent)
     rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
     if use_deterministic:
         if use_cache:
@@ -435,34 +437,44 @@ def _ridge_permutation_numpy(
         else:
             inv_perm_table = rng_obj.inverse_permutation_table(n_genes, n_rand)
     else:
-        # Fast NumPy RNG (~70x faster, no caching needed)
         if verbose:
             print("  Generating permutation table (fast NumPy RNG)...")
         inv_perm_table = generate_inverse_permutation_table_fast(n_genes, n_rand, seed)
 
-    # Accumulators
+    # Y-row needs the FORWARD perm table (Y[perm[i], :] == T[:, inv_perm]·Y).
+    # The inverse-perm table is what the cupy/cuda_native paths use, so we
+    # compute the forward by inverting once — cheaper than re-shuffling.
+    if use_yrow:
+        fwd_perm_table = np.empty_like(inv_perm_table)
+        rows = np.arange(n_genes)
+        for i in range(n_rand):
+            fwd_perm_table[i, inv_perm_table[i]] = rows
+
+    if verbose:
+        print(f"  running {n_rand} permutations "
+              f"({'Y-row' if use_yrow else 'T-column'} method, "
+              f"m={n_samples} vs p={n_features})...")
+
     aver = np.zeros((n_features, n_samples), dtype=np.float64)
     aver_sq = np.zeros((n_features, n_samples), dtype=np.float64)
     pvalue_counts = np.zeros((n_features, n_samples), dtype=np.float64)
     abs_beta = np.abs(beta)
-
-    # Ensure T is contiguous for efficient column indexing
     T = np.ascontiguousarray(T)
+    Y = np.ascontiguousarray(Y)
 
-    # Permutation loop with T-column permutation
-    for i in range(n_rand):
-        inv_perm_idx = inv_perm_table[i]
-
-        # Permute columns of T (equivalent to permuting rows of Y)
-        T_perm = T[:, inv_perm_idx]
-
-        # Compute permuted beta (Y stays in place)
-        beta_perm = T_perm @ Y
-
-        # Accumulate statistics
-        pvalue_counts += (np.abs(beta_perm) >= abs_beta).astype(np.float64)
-        aver += beta_perm
-        aver_sq += beta_perm ** 2
+    if use_yrow:
+        for i in range(n_rand):
+            beta_perm = T @ Y[fwd_perm_table[i], :]
+            pvalue_counts += (np.abs(beta_perm) >= abs_beta).astype(np.float64)
+            aver += beta_perm
+            aver_sq += beta_perm ** 2
+    else:
+        for i in range(n_rand):
+            T_perm = T[:, inv_perm_table[i]]
+            beta_perm = T_perm @ Y
+            pvalue_counts += (np.abs(beta_perm) >= abs_beta).astype(np.float64)
+            aver += beta_perm
+            aver_sq += beta_perm ** 2
 
     # --- Step 4: Finalize statistics (matching R SecAct exactly) ---
     if verbose:
