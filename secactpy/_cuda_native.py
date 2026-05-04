@@ -62,6 +62,25 @@ try:
             ctypes.POINTER(ctypes.c_int),
         ]
         _lib.ridge_cuda_dense.restype  = ctypes.c_int
+        # ridge_cuda_sparse — present in v0.2+ of libridgecuda_native.so
+        # (RidgeCuda commit 5eb3130). Older builds are dense-only; the
+        # sparse routing layer below detects this and falls back to CuPy.
+        if hasattr(_lib, "ridge_cuda_sparse"):
+            _lib.ridge_cuda_sparse.argtypes = [
+                ctypes.POINTER(ctypes.c_double),  # X
+                ctypes.c_int, ctypes.c_int,
+                ctypes.POINTER(ctypes.c_double),  # Y_vals
+                ctypes.POINTER(ctypes.c_int),     # Y_row_indices (CSC i)
+                ctypes.POINTER(ctypes.c_int),     # Y_col_pointers (CSC p)
+                ctypes.c_int, ctypes.c_int,
+                ctypes.c_double, ctypes.c_int, ctypes.c_int,
+                ctypes.POINTER(ctypes.c_double),  # beta
+                ctypes.POINTER(ctypes.c_double),  # se
+                ctypes.POINTER(ctypes.c_double),  # zscore
+                ctypes.POINTER(ctypes.c_double),  # pvalue
+                ctypes.POINTER(ctypes.c_int),     # perm_table
+            ]
+            _lib.ridge_cuda_sparse.restype = ctypes.c_int
         # Optional fast srand-based inverse perm-table builder (not in
         # older builds of libridgecuda_native.so).
         if hasattr(_lib, "build_inv_perm_table_srand"):
@@ -165,3 +184,82 @@ def ridge_dense(X, Y, lambda_, n_rand, *,
         raise RuntimeError(f"ridge_cuda_dense returned status {rc}")
     return {"beta": beta, "se": se, "zscore": zscore, "pvalue": pvalue,
             "method": "cuda_native"}
+
+
+def has_sparse_kernel() -> bool:
+    """True if the loaded libridgecuda_native.so exposes ridge_cuda_sparse.
+    Older builds are dense-only; callers should fall back to CuPy in that
+    case."""
+    return CUDA_NATIVE_AVAILABLE and hasattr(_lib, "ridge_cuda_sparse")
+
+
+def ridge_sparse(X, Y_csc, lambda_, n_rand, *,
+                 inv_perm_table, batch_size=0, device_id=0):
+    """Run RidgeCuda's compiled CUDA kernel on dense X, sparse CSC Y.
+
+    Routes a scipy.sparse CSC matrix straight to the cusparseSpMM-based
+    `ridge_cuda_sparse` symbol (RidgeCuda v0.2+). No host-side densify;
+    CSR/CSC components live on the GPU as separate `data` / `indices` /
+    `indptr` arrays and each per-permutation X' Y_perm is computed via
+    cusparseSpMM. The same caller-supplied inv_perm_table seam used by
+    the dense path applies here, so β/SE/z/p match the dense path
+    bit-for-bit (within cuSPARSE-vs-cuBLAS reduction-order ε).
+
+    Parameters
+    ----------
+    X : (n_genes, n_features) float64 ndarray, pre-scaled.
+    Y_csc : scipy.sparse CSC matrix, shape (n_genes, n_samples).
+    lambda_ : float
+    n_rand : int
+    inv_perm_table : (n_rand, n_genes) int32 ndarray, REQUIRED.
+    """
+    if not has_sparse_kernel():
+        raise RuntimeError(
+            "ridge_cuda_sparse not available in libridgecuda_native.so. "
+            "Rebuild against RidgeCuda v0.2+ (commit 5eb3130 or later) "
+            "from ridge-bench/backends/cuda_native.")
+    from scipy import sparse as sps
+    if not sps.issparse(Y_csc):
+        raise TypeError("Y_csc must be a scipy.sparse matrix")
+    Y_csc = Y_csc.tocsc().astype(np.float64)
+    _ensure_init(device_id)
+
+    X = np.asfortranarray(X, dtype=np.float64)
+    n_genes, n_features = X.shape
+    n_samples = Y_csc.shape[1]
+    nnz = Y_csc.nnz
+    if Y_csc.shape[0] != n_genes:
+        raise ValueError(f"Y rows ({Y_csc.shape[0]}) != X rows ({n_genes})")
+
+    Y_vals = np.ascontiguousarray(Y_csc.data,    dtype=np.float64)
+    Y_idx  = np.ascontiguousarray(Y_csc.indices, dtype=np.int32)
+    Y_ptr  = np.ascontiguousarray(Y_csc.indptr,  dtype=np.int32)
+
+    perm = np.ascontiguousarray(inv_perm_table, dtype=np.int32)
+    if perm.shape != (n_rand, n_genes):
+        raise ValueError(
+            f"inv_perm_table must be ({n_rand}, {n_genes}); got {perm.shape}")
+
+    beta   = np.zeros((n_features, n_samples), dtype=np.float64, order='F')
+    se     = np.zeros((n_features, n_samples), dtype=np.float64, order='F')
+    zscore = np.zeros((n_features, n_samples), dtype=np.float64, order='F')
+    pvalue = np.zeros((n_features, n_samples), dtype=np.float64, order='F')
+
+    rc = _lib.ridge_cuda_sparse(
+        X.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+        ctypes.c_int(n_genes), ctypes.c_int(n_features),
+        Y_vals.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+        Y_idx.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+        Y_ptr.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+        ctypes.c_int(n_samples), ctypes.c_int(nnz),
+        ctypes.c_double(lambda_), ctypes.c_int(n_rand), ctypes.c_int(batch_size),
+        beta.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+        se.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+        zscore.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+        pvalue.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+        perm.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+    )
+    if rc != 0:
+        raise RuntimeError(f"ridge_cuda_sparse returned status {rc}")
+    return {"beta": beta, "se": se, "zscore": zscore, "pvalue": pvalue,
+            "method": "cuda_native_sparse"}

@@ -113,10 +113,23 @@ try:
         build_inv_perm_table_srand as _build_inv_perm_native,
         CUDA_NATIVE_AVAILABLE,
     )
+    # ridge_sparse + has_sparse_kernel — added when libridgecuda_native.so
+    # was rebuilt against RidgeCuda v0.2+ (commit 5eb3130). Older builds
+    # lack ridge_cuda_sparse; has_sparse_kernel() returns False there.
+    try:
+        from secactpy._cuda_native import (
+            ridge_sparse as _ridge_sparse_cuda_native,
+            has_sparse_kernel as _cuda_native_has_sparse,
+        )
+    except Exception:
+        _ridge_sparse_cuda_native = None
+        _cuda_native_has_sparse = lambda: False
 except Exception:
     CUDA_NATIVE_AVAILABLE = False
     _ridge_dense_cuda_native = None
     _build_inv_perm_native = None
+    _ridge_sparse_cuda_native = None
+    _cuda_native_has_sparse = lambda: False
 
 
 _BACKENDS = ("auto", "numpy", "cupy", "cuda_native")
@@ -345,8 +358,16 @@ def ridge(
         is_sparse_Y = False
 
     if is_sparse_Y:
-        # cuda_native is dense-only; sparse keeps the existing routes.
-        if backend in ("cupy", "cuda_native"):
+        # cuda_native: when the loaded libridgecuda_native.so exposes
+        # ridge_cuda_sparse (RidgeCuda v0.2+ / commit 5eb3130 onward),
+        # route sparse Y through the compiled cusparseSpMM kernel —
+        # bit-equivalent to the dense path but skips the densify step
+        # and avoids the CuPy fallback. Older builds fall back to CuPy.
+        if backend == "cuda_native" and _cuda_native_has_sparse():
+            result = _ridge_sparse_cuda_native_dispatch(
+                X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method,
+                use_cache, verbose, col_center=col_center, col_scale=col_scale)
+        elif backend in ("cupy", "cuda_native"):
             result = _ridge_sparse_cupy(X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method, use_cache, verbose, col_center=col_center, col_scale=col_scale)
         else:
             result = _ridge_sparse_permutation_numpy(X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method, use_cache, verbose, col_center=col_center, col_scale=col_scale)
@@ -645,6 +666,70 @@ def _ridge_cuda_native_dense(
 
     return _ridge_dense_cuda_native(
         X, Y, lambda_, n_rand,
+        inv_perm_table=inv_perm_table)
+
+
+def _ridge_sparse_cuda_native_dispatch(
+    X: np.ndarray,
+    Y,                                # scipy.sparse matrix (CSR/CSC)
+    lambda_: float,
+    n_rand: int,
+    seed: int,
+    use_gsl_rng: bool,
+    rng_method: str,
+    use_cache: bool,
+    verbose: bool,
+    *,
+    col_center: bool = False,
+    col_scale: bool = False,
+) -> dict[str, np.ndarray]:
+    """Sparse ridge via the compiled CUDA kernel's cusparseSpMM path.
+
+    Same RidgeCuda kernel the dense path uses, but takes Y as scipy.sparse
+    CSC and forwards the CSC slot arrays (data / indices / indptr) to
+    `ridge_cuda_sparse` — no host-side densify, the compute happens via
+    cusparseSpMM on GPU. Bit-equivalent to the cuda_native dense path
+    on β when fed dense(Y) vs sparse(Y) with the same inv_perm_table
+    (the cuSPARSE-vs-cuBLAS reduction order shifts by ε ~ 1e-15).
+
+    Available only when libridgecuda_native.so is built against
+    RidgeCuda v0.2+ (commit 5eb3130 onward); caller (`ridge`) gates on
+    `_cuda_native_has_sparse()`.
+    """
+    if n_rand == 0:
+        raise NotImplementedError(
+            "t-test (n_rand=0) not implemented for cuda_native sparse; "
+            "use backend='numpy' for t-test.")
+    if col_center or col_scale:
+        # Same constraint the cusparseSpMM path inherits — column z-score
+        # would destroy sparsity. Caller's responsibility.
+        raise NotImplementedError(
+            "col_center / col_scale not supported on the cuda_native "
+            "sparse path (would densify Y). Pre-scale dense X instead.")
+
+    # Build the inverse permutation table the same way the dense path does
+    # so dense ≡ sparse at the same seed.
+    rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
+    if (rng_method == "srand" and not use_cache
+            and _build_inv_perm_native is not None):
+        inv_perm_table = _build_inv_perm_native(X.shape[0], n_rand, seed)
+    elif use_deterministic:
+        if use_cache:
+            inv_perm_table = get_cached_inverse_perm_table(
+                X.shape[0], n_rand, seed, verbose=verbose)
+        else:
+            inv_perm_table = rng_obj.inverse_permutation_table(X.shape[0], n_rand)
+    else:
+        inv_perm_table = generate_inverse_permutation_table_fast(
+            X.shape[0], n_rand, seed)
+
+    if verbose:
+        print(f"  cuda_native sparse: dispatching to ridge_cuda_sparse "
+              f"({n_rand} perms via cusparseSpMM, no densify)")
+
+    Y_csc = Y.tocsc() if not sps.isspmatrix_csc(Y) else Y
+    return _ridge_sparse_cuda_native(
+        X, Y_csc, lambda_, n_rand,
         inv_perm_table=inv_perm_table)
 
 
