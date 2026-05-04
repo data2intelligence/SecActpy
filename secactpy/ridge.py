@@ -701,11 +701,20 @@ def _ridge_sparse_cuda_native_dispatch(
             "t-test (n_rand=0) not implemented for cuda_native sparse; "
             "use backend='numpy' for t-test.")
     if col_center or col_scale:
-        # Same constraint the cusparseSpMM path inherits — column z-score
-        # would destroy sparsity. Caller's responsibility.
-        raise NotImplementedError(
-            "col_center / col_scale not supported on the cuda_native "
-            "sparse path (would densify Y). Pre-scale dense X instead.")
+        # The C kernel computes raw X' Y_perm without in-flight column
+        # normalization. col_center=True requires subtracting a correction
+        # term that propagates into the per-permutation p-value counts,
+        # which can't be applied post-hoc; col_scale-only could in
+        # principle be done by pre-scaling Y_csc.data sparsity-preservingly
+        # but isn't implemented yet. Fall back to the CuPy sparse path
+        # (which has full in-flight normalization support) so the call
+        # succeeds with correct numerics — caller pays the CuPy overhead.
+        if verbose:
+            print("  cuda_native sparse: col_center/col_scale requested → "
+                  "falling back to CuPy sparse path for in-flight normalization")
+        return _ridge_sparse_cupy(
+            X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method,
+            use_cache, verbose, col_center=col_center, col_scale=col_scale)
 
     # Build the inverse permutation table the same way the dense path does
     # so dense ≡ sparse at the same seed.
