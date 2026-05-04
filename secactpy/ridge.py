@@ -700,21 +700,19 @@ def _ridge_sparse_cuda_native_dispatch(
         raise NotImplementedError(
             "t-test (n_rand=0) not implemented for cuda_native sparse; "
             "use backend='numpy' for t-test.")
+    # In-flight column normalization is now done INSIDE the CUDA kernel
+    # (RidgeCuda commit, applyColCorrection in ridge_cuda_sparse). We
+    # compute μ/σ once on the host using SecActpy's _sparse_col_stats
+    # convention (mean/std over ALL n rows, treating zeros as samples)
+    # and pass the device-uploaded arrays into the kernel. The same
+    # correction is applied to β_obs and every β_perm, so SE/z/p reflect
+    # the column-normalized statistic exactly — no CuPy fallback needed.
+    col_mu_arr = None
+    col_sigma_arr = None
     if col_center or col_scale:
-        # The C kernel computes raw X' Y_perm without in-flight column
-        # normalization. col_center=True requires subtracting a correction
-        # term that propagates into the per-permutation p-value counts,
-        # which can't be applied post-hoc; col_scale-only could in
-        # principle be done by pre-scaling Y_csc.data sparsity-preservingly
-        # but isn't implemented yet. Fall back to the CuPy sparse path
-        # (which has full in-flight normalization support) so the call
-        # succeeds with correct numerics — caller pays the CuPy overhead.
-        if verbose:
-            print("  cuda_native sparse: col_center/col_scale requested → "
-                  "falling back to CuPy sparse path for in-flight normalization")
-        return _ridge_sparse_cupy(
-            X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method,
-            use_cache, verbose, col_center=col_center, col_scale=col_scale)
+        mu, sigma, _ = _sparse_col_stats(Y)
+        if col_center: col_mu_arr    = mu
+        if col_scale:  col_sigma_arr = sigma
 
     # Build the inverse permutation table the same way the dense path does
     # so dense ≡ sparse at the same seed.
@@ -733,13 +731,17 @@ def _ridge_sparse_cuda_native_dispatch(
             X.shape[0], n_rand, seed)
 
     if verbose:
+        norm_tag = ""
+        if col_mu_arr is not None or col_sigma_arr is not None:
+            norm_tag = f" + in-flight col-norm (center={col_center}, scale={col_scale})"
         print(f"  cuda_native sparse: dispatching to ridge_cuda_sparse "
-              f"({n_rand} perms via cusparseSpMM, no densify)")
+              f"({n_rand} perms via cusparseSpMM, no densify){norm_tag}")
 
     Y_csc = Y.tocsc() if not sps.isspmatrix_csc(Y) else Y
     return _ridge_sparse_cuda_native(
         X, Y_csc, lambda_, n_rand,
-        inv_perm_table=inv_perm_table)
+        inv_perm_table=inv_perm_table,
+        col_mu=col_mu_arr, col_sigma=col_sigma_arr)
 
 
 def _ridge_cupy(

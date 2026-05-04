@@ -79,6 +79,8 @@ try:
                 ctypes.POINTER(ctypes.c_double),  # zscore
                 ctypes.POINTER(ctypes.c_double),  # pvalue
                 ctypes.POINTER(ctypes.c_int),     # perm_table
+                ctypes.POINTER(ctypes.c_double),  # col_mu (NULL or length n_samples)
+                ctypes.POINTER(ctypes.c_double),  # col_sigma (NULL or length n_samples)
             ]
             _lib.ridge_cuda_sparse.restype = ctypes.c_int
         # Optional fast srand-based inverse perm-table builder (not in
@@ -194,7 +196,8 @@ def has_sparse_kernel() -> bool:
 
 
 def ridge_sparse(X, Y_csc, lambda_, n_rand, *,
-                 inv_perm_table, batch_size=0, device_id=0):
+                 inv_perm_table, batch_size=0, device_id=0,
+                 col_mu=None, col_sigma=None):
     """Run RidgeCuda's compiled CUDA kernel on dense X, sparse CSC Y.
 
     Routes a scipy.sparse CSC matrix straight to the cusparseSpMM-based
@@ -245,6 +248,24 @@ def ridge_sparse(X, Y_csc, lambda_, n_rand, *,
     zscore = np.zeros((n_features, n_samples), dtype=np.float64, order='F')
     pvalue = np.zeros((n_features, n_samples), dtype=np.float64, order='F')
 
+    # Optional in-flight col-normalization (β = (β_raw - c⊗μ) / σ inside
+    # the kernel; c = T·1ₙ computed there too). Pass NULL via empty
+    # ctypes pointer to skip either part of the correction.
+    if col_mu is not None:
+        col_mu = np.ascontiguousarray(col_mu, dtype=np.float64)
+        if col_mu.shape != (n_samples,):
+            raise ValueError(f"col_mu must be (n_samples={n_samples},); got {col_mu.shape}")
+        mu_p = col_mu.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+    else:
+        mu_p = ctypes.POINTER(ctypes.c_double)()
+    if col_sigma is not None:
+        col_sigma = np.ascontiguousarray(col_sigma, dtype=np.float64)
+        if col_sigma.shape != (n_samples,):
+            raise ValueError(f"col_sigma must be (n_samples={n_samples},); got {col_sigma.shape}")
+        sigma_p = col_sigma.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+    else:
+        sigma_p = ctypes.POINTER(ctypes.c_double)()
+
     rc = _lib.ridge_cuda_sparse(
         X.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
         ctypes.c_int(n_genes), ctypes.c_int(n_features),
@@ -258,6 +279,7 @@ def ridge_sparse(X, Y_csc, lambda_, n_rand, *,
         zscore.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
         pvalue.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
         perm.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+        mu_p, sigma_p,
     )
     if rc != 0:
         raise RuntimeError(f"ridge_cuda_sparse returned status {rc}")
