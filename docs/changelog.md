@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-14
+
+### Fixed
+- **Docker `with-r` / `gpu-with-r` images**: pin `BiRewire 3.40.0` from the
+  Bioconductor 3.21 archive. `BiRewire` was deprecated in Bioc 3.22 and
+  removed in 3.23; the R 4.6 base image now ships Bioc 3.23, so
+  `BiocManager::install('BiRewire')` returned `package 'BiRewire' is not
+  available for Bioconductor version '3.23'` and the R-image builds aborted
+  at the verification step. `SpaCET 1.4.0` still hard-imports `BiRewire`
+  (`Imports: BiRewire`), so dropping it isn't an option — the Dockerfile now
+  installs `BiRewire 3.40.0` (last release, 2025-04-15) from
+  `bioconductor.org/packages/3.21/bioc/src/contrib/` via
+  `remotes::install_url()`, with CRAN deps (`igraph`, `slam`, `Rtsne`,
+  `Matrix`) resolving from RSPM. `BiRewire` is no longer in the Bioc 3.23
+  bulk-install list. Verified end-to-end: `BiRewire 3.40.0 OK` →
+  `All 38 required R packages verified OK` → `SpaCET 1.4.0 OK` on amd64 and
+  arm64 R variants.
+
+### Notes
+- Python package contents are unchanged from v0.3.0. The patch is
+  Dockerfile-only: `with-r` and `gpu-with-r` image builds were broken on
+  v0.3.0 because of the upstream Bioconductor deprecation. CPU/GPU
+  Python-only images and the PyPI wheel are unaffected.
+
 ## [0.3.0] - 2026-05-14
 
 ### Added
