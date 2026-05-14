@@ -190,7 +190,7 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
                   'Biobase', 'S4Vectors', 'IRanges', \
                   'SummarizedExperiment', 'SingleCellExperiment', \
                   'rhdf5', 'ComplexHeatmap', 'limma', \
-                  'UCell', 'BiRewire', \
+                  'UCell', \
                   'sva', 'multtest' \
               ); \
               BiocManager::install(bioc_pkgs, ask = FALSE, update = FALSE, \
@@ -244,6 +244,28 @@ RUN if [ "$INSTALL_R" = "true" ]; then \
                   'psych', 'RANN', 'sctransform', \
                   'irlba', 'igraph', 'Rtsne', 'ROCR', 'entropy' \
               ), dependencies = NA, Ncpus = parallel::detectCores())"; \
+    fi
+
+# Install BiRewire from pinned Bioconductor 3.21 archive.
+# BiRewire was deprecated in Bioc 3.22 and removed in 3.23; the current R 4.6
+# base image ships Bioc 3.23 so BiocManager::install('BiRewire') no longer
+# works. SpaCET 1.4.0 still hard-imports it (Imports: BiRewire), so we install
+# the last released source tarball (3.40.0, 2025-04-15) and let remotes pull
+# its CRAN deps (igraph, slam, Rtsne, Matrix) from RSPM.
+ARG INSTALL_R
+RUN if [ "$INSTALL_R" = "true" ]; then \
+        echo "========================================" && \
+        echo "Installing BiRewire 3.40.0 from Bioc 3.21 archive..." && \
+        echo "========================================" && \
+        R -e "options(timeout = 600, \
+                  repos = c(CRAN = Sys.getenv('RSPM', 'https://cloud.r-project.org/'))); \
+              remotes::install_url( \
+                  'https://bioconductor.org/packages/3.21/bioc/src/contrib/BiRewire_3.40.0.tar.gz', \
+                  dependencies = c('Depends', 'Imports', 'LinkingTo'), \
+                  upgrade = 'never', \
+                  Ncpus = parallel::detectCores()); \
+              library(BiRewire); \
+              cat('BiRewire', as.character(packageVersion('BiRewire')), 'OK\n')"; \
     fi
 
 # Install arrow separately (large package with C++ library download)

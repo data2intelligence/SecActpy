@@ -79,7 +79,11 @@ When building with `INSTALL_R=true`, the following packages are installed. CRAN 
 ### From Bioconductor (`BiocManager::install()`)
 - Biobase, S4Vectors, IRanges
 - SummarizedExperiment, SingleCellExperiment, rhdf5
-- ComplexHeatmap, limma, UCell, BiRewire
+- ComplexHeatmap, limma, UCell, sva, multtest
+
+### From pinned Bioconductor archive
+- BiRewire 3.40.0 (last release, from Bioc 3.21 archive -- deprecated/removed in
+  Bioc 3.22+; still required by SpaCET 1.4.0)
 
 ### From GitHub (`remotes::install_github()`)
 - **SecAct**: `data2intelligence/SecAct` -- Secreted protein activity inference (R-native; always installed when `INSTALL_R=true`)
