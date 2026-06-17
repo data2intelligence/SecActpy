@@ -10,16 +10,16 @@ Drop-in equivalents:
 
     >>> from secactpy._cuda_native import ridge_dense
     # ... is equivalent to:
-    >>> from flashreg._cuda import ridge_dense
+    >>> from flashregpy._cuda import ridge_dense
 """
-from flashreg._cuda import (
+from flashregpy._cuda import (
     ridge_dense,
     build_inv_perm_table_srand,
     CUDA_NATIVE_AVAILABLE,
 )
 
 try:
-    from flashreg._cuda import (
+    from flashregpy._cuda import (
         ridge_sparse,
         has_sparse_kernel,
     )
@@ -30,7 +30,7 @@ except ImportError:
         return False
 
 try:
-    from flashreg._cuda import (
+    from flashregpy._cuda import (
         ridge_dense_yrow,
         has_yrow_kernel,
     )
