@@ -12,10 +12,10 @@ NumPy) for free.
 
 If you want to use the new backend explicitly:
 
-    >>> from flashregpy import ridge
+    >>> from flashreg import ridge
     >>> result = ridge(X, Y, lambda_=5e5, n_rand=1000, backend='omp')
 """
-from flashregpy.ridge import (
+from flashreg.ridge import (
     ridge,
     ridge_with_precomputed_T,
     compute_projection_matrix,
@@ -35,12 +35,12 @@ from flashregpy.ridge import (
 # directly; re-export them too if the underlying flashreg build exposes
 # them (added in flashreg 0.1.0).
 try:
-    from flashregpy.ridge import OMP_NATIVE_AVAILABLE
+    from flashreg.ridge import OMP_NATIVE_AVAILABLE
 except ImportError:
     OMP_NATIVE_AVAILABLE = False
 
 try:
-    from flashregpy.ridge import NUMBA_AVAILABLE
+    from flashreg.ridge import NUMBA_AVAILABLE
 except ImportError:
     NUMBA_AVAILABLE = False
 
