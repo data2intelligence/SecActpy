@@ -549,8 +549,8 @@ def secact_activity(
     5. Compute significance via permutation testing
     6. Return results as labeled DataFrames
 
-    For compatibility with R SecAct (with the FlashReg R package
-    providing CPU/GPU acceleration), use the default
+    For compatibility with R SecAct (with optional RidgeFast/RidgeCuda
+    accelerators), use the default
     parameters (lambda_=5e5, n_rand=1000, seed=0, scale="zscore").
     """
     start_time = time.time()
