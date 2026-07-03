@@ -10,8 +10,10 @@
 
 Python implementation of [SecAct](https://github.com/data2intelligence/SecAct) for inferring secreted protein activities from gene expression data.
 
+SecActpy ships its own high-performance ridge-regression + permutation-testing core (`numpy` and CuPy backends), which is what makes atlas-scale (millions of cells) activity inference tractable: permutation nulls that project to days–months on naïve refit-per-permutation solvers finish in minutes on GPU. That core is the same algorithm family as [**FlashRegPy**](https://github.com/data2intelligence/FlashRegPy) — a standalone, ultra-fast ridge engine that packages the regression for reuse outside activity inference. The two are sibling implementations kept numerically consistent, and SecActpy can be **consolidated onto the FlashRegPy engine**. Rule of thumb: use SecActpy for secreted-protein / cytokine **activity** scores; use FlashRegPy directly when you need the raw regression (β / SE / z / p).
+
 **Key Features:**
-- **SecAct Compatible**: Matches R SecAct (with RidgeFast/RidgeCuda accelerators) on the same platform (`rng_method='srand'`)
+- **SecAct Compatible**: Matches R SecAct on the same platform (`rng_method='srand'`)
 - **GPU Acceleration**: Optional CuPy backend for large-scale analysis
 - **Million-Sample Scale**: Batch processing with streaming output for massive datasets
 - **Streaming H5AD**: Two-pass chunk reading for >5M-cell datasets without loading the full matrix (~3 GB peak vs ~200 GB)
