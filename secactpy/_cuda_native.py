@@ -32,8 +32,7 @@ _init_error = None
 def _find_library():
     # Priority: env override > flashregpy's kernel (the optional
     # `secactpy[fast]` accelerator; single source of truth, carries the
-    # strict-eps / F3 / z-guard fixes) > vendored libridgecuda_native.so >
-    # ridge-bench build dir.
+    # strict-eps / F3 / z-guard fixes) > vendored libridgecuda_native.so.
     env = os.environ.get("SECACTPY_CUDA_NATIVE_LIB")
     if env and pathlib.Path(env).exists():
         return pathlib.Path(env)
@@ -48,11 +47,6 @@ def _find_library():
     vendored = here / "_libs" / "libridgecuda_native.so"
     if vendored.exists():
         return vendored
-    bench = pathlib.Path(
-        "/vf/users/parks34/projects/1ridgesig/ridge-bench/backends/cuda_native"
-        "/libridgecuda_native.so")
-    if bench.exists():
-        return bench
     return None
 
 
