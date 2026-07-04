@@ -9,10 +9,12 @@ Bit-equivalent to the CuPy backend on β / SE / z / p when both are
 given the same inverse permutation table — which they are, because both
 generate the table via the same SecActpy CStdlibRNG / GSLRNG class.
 
-The shared library `libridgecuda_native.so` is vendored at
-`secactpy/_libs/libridgecuda_native.so`; build it from
-`ridge-bench/backends/cuda_native` (Makefile included) and copy if
-rebuilding for a new CUDA toolkit / arch.
+The kernel is provided by the optional ``flashregpy`` accelerator
+(``pip install secactpy[fast]``) as ``libflashreg_cuda.so`` — the single
+cross-package source of truth, carrying the strict-eps / host-built-perm /
+z-guard fixes. A vendored ``libridgecuda_native.so`` at ``secactpy/_libs/``
+is the fallback when flashregpy is not installed (same CUDA ABI:
+``ridge_cuda_init`` / ``_dense`` / ``_sparse``).
 """
 from __future__ import annotations
 
@@ -28,10 +30,20 @@ _init_error = None
 
 
 def _find_library():
-    # Priority: env var > vendored path > ridge-bench build dir.
+    # Priority: env override > flashregpy's kernel (the optional
+    # `secactpy[fast]` accelerator; single source of truth, carries the
+    # strict-eps / F3 / z-guard fixes) > vendored libridgecuda_native.so >
+    # ridge-bench build dir.
     env = os.environ.get("SECACTPY_CUDA_NATIVE_LIB")
     if env and pathlib.Path(env).exists():
         return pathlib.Path(env)
+    try:
+        from flashregpy import _cuda as _fr_cuda
+        p = _fr_cuda._find_library()
+        if p is not None and pathlib.Path(p).exists():
+            return pathlib.Path(p)
+    except Exception:
+        pass
     here = pathlib.Path(__file__).resolve().parent
     vendored = here / "_libs" / "libridgecuda_native.so"
     if vendored.exists():

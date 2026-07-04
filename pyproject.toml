@@ -51,6 +51,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Optional accelerator: the sibling flashregpy engine provides fast CPU
+# (C+OpenMP) and GPU (CUDA) regression backends. Without it, SecActpy runs
+# on its own NumPy base. `pip install secactpy[fast]`.
+fast = [
+    "flashregpy>=0.1.0",
+]
 gpu = [
     "cupy-cuda11x>=10.0.0",
 ]
