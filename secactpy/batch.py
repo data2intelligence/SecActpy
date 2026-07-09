@@ -4,7 +4,13 @@ Batch processing for large-scale ridge regression.
 This module enables processing of million-sample datasets by:
 1. Precomputing the projection matrix T once
 2. Processing Y in memory-efficient batches
-3. Optionally streaming results directly to disk (h5ad format)
+3. Streaming a large Y *in* from disk in column blocks — dense (.npy memmap /
+   HDF5 dataset) or sparse (HDF5 CSC group / scipy .npz) — so the full
+   n_genes x n_samples matrix is never resident
+4. Optionally streaming results *out* directly to disk (HDF5/h5ad)
+
+Combine (3) and (4) for end-to-end read + write streaming, where neither the
+input nor the output matrix is ever held in full.
 
 Memory Management:
 ------------------
@@ -23,11 +29,22 @@ Usage:
     >>> batch_size = estimate_batch_size(n_genes=20000, n_features=50,
     ...                                   available_gb=8.0)
     >>>
-    >>> # Run batch processing (works with dense or sparse Y)
+    >>> # In-memory Y (dense or sparse), batched
     >>> result = ridge_batch(X, Y, batch_size=batch_size)
     >>>
-    >>> # Or stream directly to disk
+    >>> # Stream a large Y *in* from disk (never fully resident):
+    >>> #   dense  -> .npy memmap or HDF5 dataset (genes x samples)
+    >>> #   sparse -> HDF5 CSC group or scipy .npz
+    >>> result = ridge_batch(X, "Y.h5", batch_size=5000)
+    >>>
+    >>> # Stream results *out* to disk (returns None)
     >>> ridge_batch(X, Y, batch_size=5000, output_path="results.h5ad")
+    >>>
+    >>> # End-to-end read + write streaming (Y in, results out)
+    >>> ridge_batch(X, "Y.h5", batch_size=5000, output_path="results.h5ad")
+
+Prefer an HDF5 dataset over a .npy memmap when a strict resident-memory ceiling
+is required (see DenseChunkReader).
 """
 
 import numpy as np

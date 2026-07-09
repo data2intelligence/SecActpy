@@ -12,7 +12,10 @@ matrix `T = (X'X + λI)^{-1} X'` is computed **once** from the signature, then
 samples are processed in chunks of `batch_size` at a time. Each chunk goes
 through the full permutation-testing pipeline independently, and partial results
 are concatenated at the end. **The final output is mathematically identical** to
-processing all samples at once — only peak memory usage is reduced.
+processing all samples at once — only peak memory usage is reduced. `Y` itself
+can also be streamed *from* disk in column blocks (see
+[Streaming a large Y from disk](#streaming-a-large-y-from-disk-read-streaming)),
+so even the input matrix need not fit in RAM.
 
 All three high-level functions support `batch_size` and `output_path`:
 - `secact_activity_inference()` — bulk RNA-seq
@@ -57,6 +60,58 @@ secact_activity_inference(..., batch_size=5000, output_path="bulk_results.h5ad")
 secact_activity_inference_scrnaseq(..., batch_size=5000, output_path="sc_results.h5ad")
 secact_activity_inference_st(..., batch_size=5000, output_path="st_results.h5ad")
 ```
+
+## Streaming a large Y from disk (read streaming)
+
+The section above streams results *out*. `ridge_batch` can also stream the
+expression matrix `Y` *in*: pass an on-disk source instead of an in-memory array
+and it is read one column block at a time, so the full `n_genes × n_samples`
+matrix is never resident. This removes the memory floor where a dense `Y` would
+otherwise have to fit in RAM. Combine it with `output_path` for end-to-end
+read + write streaming — neither the input nor the output is ever held in full.
+
+Supported on-disk sources (all oriented **genes × samples**):
+
+| Source | Reader | Notes |
+|--------|--------|-------|
+| `.npy` (dense) | `DenseChunkReader` (memmap) | lazy; avoids a full float64 copy |
+| HDF5 dense dataset | `DenseChunkReader` (slab read) | **hard peak-RSS bound** |
+| HDF5 CSC group (sparse) | `SparseChunkReader` (column slab) | native lazy column reads |
+| `.npz` (scipy sparse) | `SparseChunkReader` | loaded fully in RAM (convenience) |
+
+```python
+from secactpy.batch import ridge_batch
+
+# Dense Y on disk (HDF5 dataset or .npy) — streamed in column blocks:
+result = ridge_batch(X, "Y.h5", batch_size=200_000)          # or "Y.npy"
+
+# Sparse Y on disk (HDF5 CSC group / .npz) — in-flight column normalization:
+result = ridge_batch(X, "Y_csc.h5", batch_size=200_000,
+                     sparse_mode=True, col_center=True, col_scale=True)
+
+# End-to-end read + write streaming — Y in, results out, nothing held in RAM:
+ridge_batch(X, "Y.h5", batch_size=200_000, output_path="results.h5ad")
+
+# HDF5 with multiple datasets: name the one to read
+result = ridge_batch(X, "atlas.h5", y_dataset_key="expression", batch_size=200_000)
+```
+
+Results are **bit-identical** to running the same `Y` in memory — the streaming
+loop reuses the in-memory per-block kernels, and sparse column statistics are
+per-cell so a single pass matches the sliced full-`Y` statistics exactly.
+
+**Memory note.** An HDF5 dataset gives a *hard* resident-memory ceiling: each
+column slab is read into a transient array and freed per block. A `.npy` memmap
+is lazy and avoids a full float64 copy (handy when the on-disk dtype is
+float32), but the mapped pages accumulate as *evictable* page cache, so
+`ru_maxrss` still approaches the file size. **Prefer HDF5 when you need a strict
+RSS bound.**
+
+Dense `Y` must be pre-scaled (as in the in-memory dense path); sparse `Y` gets
+in-flight centering/scaling via `col_center` / `col_scale`. This is the
+general-purpose path for an already-normalized `Y`. For the scRNA-seq / ST
+pipeline that reads a **raw** h5ad and does CPM → log2 → row-centering on the
+fly, use the two-pass `streaming=True` path in the next section instead.
 
 ## Example: batch processing with `secact_activity_inference`
 

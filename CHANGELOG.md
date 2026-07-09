@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **On-disk read streaming for `ridge_batch`**: pass `Y` as a path / `h5py`
+  handle / memmap and it is streamed in column blocks, so the full
+  `n_genes × n_samples` matrix is never resident. Dense sources (`.npy` memmap,
+  HDF5 dataset) via `DenseChunkReader`; sparse sources (HDF5 CSC group, scipy
+  `.npz`) via `SparseChunkReader`. New `y_dataset_key` argument selects the
+  dataset in a multi-dataset HDF5 file. Combine with `output_path` for
+  end-to-end read + write streaming. Results are bit-identical to the in-memory
+  paths; an HDF5 dataset gives a hard peak-RSS bound (a `.npy` memmap does not —
+  mapped pages linger as evictable page cache, so prefer HDF5 for a strict
+  ceiling).
+
 ## [0.3.1] - 2026-05-14
 
 ### Fixed
