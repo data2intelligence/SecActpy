@@ -35,6 +35,7 @@ from scipy import linalg
 from scipy import sparse as sps
 from typing import Optional, Literal, Any, Callable, Union
 from dataclasses import dataclass
+from pathlib import Path
 import time
 import warnings
 import gc
@@ -66,6 +67,8 @@ __all__ = [
     'estimate_batch_size',
     'estimate_memory',
     'StreamingResultWriter',
+    'DenseChunkReader',
+    'SparseChunkReader',
 ]
 
 
@@ -275,6 +278,211 @@ class StreamingResultWriter:
     def close(self):
         """Close the file."""
         self.file.close()
+
+
+# =============================================================================
+# On-disk Y readers: stream a large Y in column blocks without materializing
+# =============================================================================
+
+def _find_y_node(f: "h5py.File", dataset_key: Optional[str]):
+    """Locate the Y node (dense dataset or sparse group) in an HDF5 file."""
+    if dataset_key is not None:
+        return dataset_key, f[dataset_key]
+    for k in ("Y", "X", "matrix"):
+        if k in f:
+            return k, f[k]
+    keys = list(f.keys())
+    if len(keys) == 1:
+        return keys[0], f[keys[0]]
+    raise ValueError(
+        f"Cannot infer the Y node; pass y_dataset_key. Top-level keys: {keys}"
+    )
+
+
+def _h5_str_attr(node, key: str) -> str:
+    val = node.attrs.get(key, "")
+    return val.decode() if isinstance(val, bytes) else str(val)
+
+
+class DenseChunkReader:
+    """Lazy column-block reader for a dense on-disk Y (genes x samples).
+
+    Backs onto a NumPy ``.npy`` memmap or an HDF5 dataset, exposing just enough
+    of the ndarray interface (``shape``, ``ndim``, ``dtype``, and column
+    ``__getitem__``) for the batch loop to slice ``Y[:, a:b]`` without ever
+    holding the full matrix in RAM. Column blocks are returned C-contiguous
+    float64. The stored matrix must be oriented (n_genes, n_samples), matching
+    the engine's Y (transpose an AnnData cells x genes matrix before saving).
+
+    Note on memory: an HDF5 dataset gives a hard peak-RSS bound (each slab is
+    read into a transient array freed per block). A ``.npy`` memmap is lazy and
+    avoids a full anonymous float64 copy (useful when the on-disk dtype is
+    float32), but mapped file pages accumulate in RSS as evictable page cache,
+    so ``ru_maxrss`` still approaches the file size. Prefer HDF5 when a strict
+    resident-memory ceiling is required.
+    """
+
+    def __init__(self, source, dataset_key: Optional[str] = None):
+        self._file = None          # h5py.File we own and must close
+        if isinstance(source, (str, Path)):
+            s = str(source)
+            if s.lower().endswith(".npy"):
+                self._arr = np.load(s, mmap_mode="r")
+            else:
+                if not H5PY_AVAILABLE:
+                    raise ImportError("h5py is required to stream a dense HDF5 Y")
+                self._file = h5py.File(s, "r")
+                _, node = _find_y_node(self._file, dataset_key)
+                if isinstance(node, h5py.Group):
+                    raise ValueError(
+                        "HDF5 node is a sparse group, not a dense dataset; "
+                        "use SparseChunkReader / a sparse path instead."
+                    )
+                self._arr = node
+        elif H5PY_AVAILABLE and isinstance(source, h5py.Dataset):
+            self._arr = source
+        elif isinstance(source, np.memmap):
+            self._arr = source
+        else:
+            raise TypeError(f"Unsupported dense Y source: {type(source)!r}")
+
+        if self._arr.ndim != 2:
+            raise ValueError("dense Y source must be 2-D (n_genes, n_samples)")
+        self.shape = (int(self._arr.shape[0]), int(self._arr.shape[1]))
+        self.ndim = 2
+        self.dtype = np.dtype(np.float64)
+
+    def __getitem__(self, idx):
+        block = self._arr[idx]                       # slab read / strided copy
+        return np.ascontiguousarray(block, dtype=np.float64)
+
+    def close(self):
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+class SparseChunkReader:
+    """Lazy column-block reader for a sparse on-disk Y (genes x samples).
+
+    Reads column blocks as scipy CSC without loading the full matrix, from
+    either:
+      * an HDF5 sparse group (AnnData ``csc_matrix`` encoding) — native lazy
+        column slab via ``indptr``; the memory-efficient case, or
+      * a scipy ``.npz`` (``save_npz``) — loaded once into RAM then sliced
+        (NOT truly streaming; a warning is emitted).
+
+    CSC is required for lazy column reads. A CSR-encoded HDF5 group is loaded
+    in full and converted to CSC (with a warning), since column slicing a CSR
+    matrix from disk is not contiguous. The stored matrix must be oriented
+    (n_genes, n_samples).
+    """
+
+    def __init__(self, source, dataset_key: Optional[str] = None):
+        self._file = None
+        self._csc = None           # resident CSC fallback (.npz / CSR path)
+        self._data = self._indices = self._indptr = None
+
+        if isinstance(source, (str, Path)) and str(source).lower().endswith(".npz"):
+            warnings.warn(
+                "Sparse .npz Y is loaded fully into RAM (not streamed). "
+                "Re-save as an HDF5 CSC group for true column streaming.",
+                stacklevel=2,
+            )
+            self._csc = sps.load_npz(str(source)).tocsc()
+            self.shape = (int(self._csc.shape[0]), int(self._csc.shape[1]))
+        else:
+            if not H5PY_AVAILABLE:
+                raise ImportError("h5py is required to stream a sparse HDF5 Y")
+            if isinstance(source, (str, Path)):
+                self._file = h5py.File(str(source), "r")
+                _, grp = _find_y_node(self._file, dataset_key)
+            elif isinstance(source, h5py.Group):
+                grp = source
+            else:
+                raise TypeError(f"Unsupported sparse Y source: {type(source)!r}")
+            if not isinstance(grp, h5py.Group):
+                raise ValueError("sparse Y node must be an HDF5 group (data/indices/indptr)")
+            self._init_from_group(grp)
+
+        self.ndim = 2
+        self.dtype = np.dtype(np.float64)
+
+    def _init_from_group(self, grp):
+        shape = grp.attrs.get("shape", None)
+        if shape is None:
+            raise ValueError("sparse HDF5 group missing 'shape' attribute")
+        self.shape = (int(shape[0]), int(shape[1]))
+
+        enc = _h5_str_attr(grp, "encoding-type") or _h5_str_attr(grp, "h5sparse_format")
+        indptr_len = grp["indptr"].shape[0]
+        if "csc" in enc or (not enc and indptr_len == self.shape[1] + 1):
+            self._data, self._indices, self._indptr = grp["data"], grp["indices"], grp["indptr"]
+        else:
+            warnings.warn(
+                "Sparse HDF5 Y is CSR-encoded; loading in full and converting "
+                "to CSC (defeats streaming). Re-save as CSC for lazy column reads.",
+                stacklevel=2,
+            )
+            csr = sps.csr_matrix(
+                (grp["data"][:], grp["indices"][:], grp["indptr"][:]), shape=self.shape
+            )
+            self._csc = csr.tocsc()
+
+    def __getitem__(self, idx):
+        _, colsl = idx
+        a = colsl.start or 0
+        b = self.shape[1] if colsl.stop is None else colsl.stop
+        if self._csc is not None:
+            return self._csc[:, a:b]
+        indptr = self._indptr[a:b + 1]
+        lo, hi = int(indptr[0]), int(indptr[-1])
+        data = np.asarray(self._data[lo:hi], dtype=np.float64)
+        indices = self._indices[lo:hi]
+        return sps.csc_matrix((data, indices, indptr - lo), shape=(self.shape[0], b - a))
+
+    def close(self):
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+def _open_disk_y(source, dataset_key: Optional[str] = None):
+    """Open a lazy column-block reader for an on-disk Y. Returns (reader, is_sparse)."""
+    if isinstance(source, np.memmap):
+        return DenseChunkReader(source), False
+    if H5PY_AVAILABLE and isinstance(source, h5py.Dataset):
+        return DenseChunkReader(source), False
+    if H5PY_AVAILABLE and isinstance(source, h5py.Group):
+        return SparseChunkReader(source, dataset_key), True
+
+    s = str(source).lower()
+    if s.endswith(".npy"):
+        return DenseChunkReader(source, dataset_key), False
+    if s.endswith(".npz"):
+        return SparseChunkReader(source, dataset_key), True
+    if s.endswith((".h5", ".hdf5", ".h5ad")):
+        if not H5PY_AVAILABLE:
+            raise ImportError("h5py is required to stream an HDF5 Y")
+        with h5py.File(str(source), "r") as f:      # peek node kind, then reopen in reader
+            key, node = _find_y_node(f, dataset_key)
+            is_sparse = isinstance(node, h5py.Group)
+        if is_sparse:
+            return SparseChunkReader(source, key), True
+        return DenseChunkReader(source, key), False
+    raise ValueError(f"Unrecognized on-disk Y source: {source!r}")
 
 
 # =============================================================================
@@ -1014,6 +1222,162 @@ def _ridge_batch_sparse_path(
 
 
 # =============================================================================
+# Internal: On-disk (streamed) Batch Path
+# =============================================================================
+
+def _ridge_batch_disk_path(
+    X: np.ndarray,
+    reader,
+    is_sparse: bool,
+    lambda_: float,
+    n_rand: int,
+    seed: int,
+    batch_size: int,
+    backend: str,
+    use_gsl_rng: bool,
+    rng_method: str,
+    use_cache: bool,
+    output_path: Optional[str],
+    output_compression: Optional[str],
+    feature_names: Optional[list],
+    sample_names: Optional[list],
+    progress_callback: Optional[Callable[[int, int], None]],
+    verbose: bool,
+    start_time: float,
+    sparse_mode: bool,
+    col_center: bool,
+    col_scale: bool,
+) -> Optional[dict[str, Any]]:
+    """Stream a large on-disk Y in column blocks (never fully resident).
+
+    Reuses the in-memory per-block kernels (``_process_batch_*`` for dense,
+    ``_process_sparse_batch_*`` for sparse), so results are bit-identical to
+    the in-memory ``ridge_batch`` paths. Sparse column statistics are per-cell
+    (no cross-column dependency without ``row_center``), so a single pass
+    suffices — matching the sliced full-Y stats exactly.
+    """
+    X = np.asarray(X, dtype=np.float64)
+    n_genes, n_features = X.shape
+    if reader.shape[0] != n_genes:
+        raise ValueError(
+            f"X and Y must have same number of rows: {n_genes} vs {reader.shape[0]}"
+        )
+    if n_rand <= 0:
+        raise ValueError("Batch processing requires n_rand > 0. Use ridge() for t-test.")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+
+    n_samples = reader.shape[1]
+    n_batches = math.ceil(n_samples / batch_size)
+
+    backend = resolve_backend(backend)
+    use_gpu = (backend == "cupy")
+
+    if verbose:
+        kind = "sparse" if is_sparse else "dense"
+        print(f"Ridge batch processing (on-disk {kind}, streamed):")
+        print(f"  Data: {n_genes} genes, {n_features} features, {n_samples} samples")
+        print(f"  Batches: {n_batches} (size={batch_size}), backend={backend}")
+
+    # --- projection ---
+    if is_sparse:
+        proj = _compute_projection_components(X, lambda_)
+        T, c = proj.T, proj.c
+        T_gpu = None
+    else:
+        c = None
+        if use_gpu:
+            X_gpu = cp.asarray(X, dtype=cp.float64)
+            T_gpu = _compute_T_cupy(X_gpu, lambda_)
+            del X_gpu
+            _free_gpu_memory()
+            T = None
+        else:
+            T = _compute_T_numpy(X, lambda_)
+            T_gpu = None
+
+    # --- permutation table ---
+    rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
+    if use_deterministic:
+        if use_cache:
+            inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
+        else:
+            inv_perm_table = rng_obj.inverse_permutation_table(n_genes, n_rand)
+    else:
+        inv_perm_table = generate_inverse_permutation_table_fast(n_genes, n_rand, seed)
+
+    # --- streaming output ---
+    writer = None
+    if output_path is not None:
+        writer = StreamingResultWriter(
+            output_path, n_features=n_features, n_samples=n_samples,
+            feature_names=feature_names, sample_names=sample_names,
+            compression=output_compression,
+        )
+    results_list = [] if writer is None else None
+
+    try:
+        for batch_idx in range(n_batches):
+            batch_start = time.time()
+            start_col = batch_idx * batch_size
+            end_col = min(start_col + batch_size, n_samples)
+            Y_block = reader[:, start_col:end_col]      # slab read from disk
+
+            if is_sparse:
+                stats = _compute_population_stats(Y_block, row_center=False)
+                fn = _process_sparse_batch_cupy if use_gpu else _process_sparse_batch_numpy
+                batch_result = fn(
+                    T, c, Y_block, stats.sigma, stats.mu_over_sigma,
+                    inv_perm_table, n_rand, sparse_mode=sparse_mode,
+                    row_means=None, col_center=col_center, col_scale=col_scale, mu=stats.mu,
+                )
+                del stats
+            elif use_gpu:
+                batch_result = _process_batch_cupy(T_gpu, Y_block, inv_perm_table, n_rand)
+            else:
+                batch_result = _process_batch_numpy(T, Y_block, inv_perm_table, n_rand)
+
+            if writer is not None:
+                writer.write_batch(batch_result, start_col=start_col)
+            else:
+                results_list.append(batch_result)
+
+            if progress_callback is not None:
+                progress_callback(batch_idx, n_batches)
+            if verbose:
+                print(f"    Batch {batch_idx + 1}/{n_batches}: "
+                      f"{end_col - start_col} samples in {time.time() - batch_start:.2f}s")
+
+            del Y_block, batch_result
+            gc.collect()
+    finally:
+        reader.close()
+
+    total_time = time.time() - start_time
+    del inv_perm_table
+    if use_gpu:
+        _free_gpu_memory()
+    gc.collect()
+
+    method = f"{backend}_batch_disk_{'sparse' if is_sparse else 'dense'}"
+    if writer is not None:
+        writer.close()
+        if verbose:
+            print(f"  Results written to {output_path} in {total_time:.2f}s")
+        return None
+
+    return {
+        'beta': np.hstack([r['beta'] for r in results_list]),
+        'se': np.hstack([r['se'] for r in results_list]),
+        'zscore': np.hstack([r['zscore'] for r in results_list]),
+        'pvalue': np.hstack([r['pvalue'] for r in results_list]),
+        'method': method,
+        'time': total_time,
+        'n_batches': n_batches,
+    }
+
+
+# =============================================================================
 # Main Public API
 # =============================================================================
 
@@ -1037,6 +1401,7 @@ def ridge_batch(
     row_center: bool = False,
     col_center: bool = True,
     col_scale: bool = True,
+    y_dataset_key: Optional[str] = None,
     verbose: bool = False
 ) -> Optional[dict[str, Any]]:
     """
@@ -1044,6 +1409,13 @@ def ridge_batch(
 
     Computes T = (X'X + λI)^{-1} X' once, then processes Y in batches.
     Handles both dense and sparse Y matrices efficiently.
+
+    ``Y`` may also be an on-disk source — a path (``.npy`` / ``.npz`` / HDF5),
+    an ``h5py`` dataset/group, or a NumPy memmap — in which case it is streamed
+    in column blocks and never fully materialized (combine with ``output_path``
+    for end-to-end read+write streaming). On-disk Y must be oriented
+    (n_genes, n_samples); dense sources go through ``DenseChunkReader`` and
+    sparse HDF5-CSC / ``.npz`` through ``SparseChunkReader``.
 
     Parameters
     ----------
@@ -1133,7 +1505,25 @@ def ridge_batch(
     >>> ridge_batch(X, Y, batch_size=10000, output_path="results.h5ad")
     """
     start_time = time.time()
-    
+
+    # === ON-DISK (STREAMED) PATH ===
+    # A path / h5py handle / memmap Y is streamed in column blocks so the full
+    # matrix is never resident. Detected before the in-memory dispatch below.
+    _is_handle = (isinstance(Y, (str, Path))
+                  or isinstance(Y, np.memmap)
+                  or (H5PY_AVAILABLE and isinstance(Y, (h5py.Dataset, h5py.Group))))
+    if _is_handle:
+        reader, is_sparse = _open_disk_y(Y, y_dataset_key)
+        return _ridge_batch_disk_path(
+            X=X, reader=reader, is_sparse=is_sparse, lambda_=lambda_, n_rand=n_rand,
+            seed=seed, batch_size=batch_size, backend=backend, use_gsl_rng=use_gsl_rng,
+            rng_method=rng_method, use_cache=use_cache, output_path=output_path,
+            output_compression=output_compression, feature_names=feature_names,
+            sample_names=sample_names, progress_callback=progress_callback,
+            verbose=verbose, start_time=start_time, sparse_mode=sparse_mode,
+            col_center=col_center, col_scale=col_scale,
+        )
+
     # === SPARSE PATH ===
     if sps.issparse(Y):
         return _ridge_batch_sparse_path(
