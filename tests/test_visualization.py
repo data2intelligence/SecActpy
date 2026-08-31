@@ -7,6 +7,7 @@ import pytest
 from secactpy.visualization import (
     activity_correlation,
     activity_distribution,
+    ccc_heatmap,
     celltype_activity_boxplot,
     celltype_distribution,
     celltype_expression_boxplot,
@@ -137,3 +138,35 @@ def test_secreted_protein_heatmap_empty():
     fig = secreted_protein_heatmap(pd.DataFrame())
     assert fig is not None
     assert not fig.data or fig.data[0].type != "heatmap"
+
+
+def test_ccc_heatmap_counts():
+    ccc = pd.DataFrame({
+        "sender":   ["A", "A", "B", "A", "C"],
+        "receiver": ["B", "B", "C", "C", "A"],
+        "secretedProtein": ["IL15", "TGFB1", "IL15", "CXCL9", "IL2"],
+    })
+    fig = ccc_heatmap(ccc)
+    h = fig.data[0]
+    assert h.type == "heatmap"
+    # axes are the union of senders and receivers, aligned
+    assert list(h.x) == ["A", "B", "C"]
+    assert list(h.y) == ["C", "B", "A"]          # rows reversed (first sender on top)
+    # A->B has 2 edges; z rows are reversed, so A is the last z-row
+    zdf = pd.DataFrame(h.z, index=list(h.y), columns=list(h.x))
+    assert zdf.loc["A", "B"] == 2
+    assert zdf.loc["B", "C"] == 1 and zdf.loc["C", "A"] == 1
+    assert fig.layout.yaxis.title.text == "Sender"
+    assert fig.layout.xaxis.title.text == "Receiver"
+
+
+def test_ccc_heatmap_accepts_result_dict_and_empty():
+    # full result dict
+    fig = ccc_heatmap({"secreted_protein_ccc": pd.DataFrame(
+        {"sender": ["A"], "receiver": ["B"], "secretedProtein": ["IL15"]})})
+    assert fig.data[0].type == "heatmap"
+    # empty / missing columns -> placeholder figure (no heatmap trace), not a crash
+    empty = ccc_heatmap(pd.DataFrame())
+    assert not empty.data or empty.data[0].type != "heatmap"
+    empty2 = ccc_heatmap({"secreted_protein_ccc": pd.DataFrame()})
+    assert not empty2.data or empty2.data[0].type != "heatmap"
