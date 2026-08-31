@@ -150,6 +150,7 @@ try:
         celltype_activity_boxplot,
         celltype_distribution,
         celltype_expression_boxplot,
+        ccc_circle,
         ccc_heatmap,
         gene_expression_stats,
         risk_lollipop,
@@ -268,6 +269,7 @@ __all__ = [
     "risk_lollipop",
     "secreted_protein_heatmap",
     "ccc_heatmap",
+    "ccc_circle",
     # Downstream analysis
     "coxph_regression",
     "signaling_pattern",

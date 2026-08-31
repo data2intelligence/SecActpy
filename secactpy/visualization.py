@@ -534,3 +534,208 @@ def _empty_figure(message: str) -> go.Figure:
         template="plotly_white",
     )
     return fig
+
+
+def _ccc_matrix(ccc: Any) -> pd.DataFrame:
+    """Sender x receiver edge-count matrix on the union of cell types."""
+    if isinstance(ccc, dict):
+        ccc = ccc.get("secreted_protein_ccc")
+    cols = getattr(ccc, "columns", [])
+    if ccc is None or len(ccc) == 0 or not {"sender", "receiver"}.issubset(set(cols)):
+        return pd.DataFrame()
+    mat = pd.crosstab(ccc["sender"], ccc["receiver"])
+    types = sorted(set(mat.index) | set(mat.columns))
+    return mat.reindex(index=types, columns=types, fill_value=0)
+
+
+def _arc(t0, t1, r, n=40):
+    a = np.linspace(t0, t1, n)
+    return r * np.cos(a), r * np.sin(a)
+
+
+def _ribbon(t0, t1, s0, s1, r, n=40):
+    """Filled chord between arc spans [t0,t1] and [s0,s1].
+
+    Both flanks are quadratic Beziers pulled toward the centre, which is what
+    makes a chord read as a connection rather than as a polygon: a straight
+    flank between two arcs on a circle looks like a wedge of the disc.
+    """
+    def bez(a, b, m=n):
+        p0 = np.array([r * np.cos(a), r * np.sin(a)])
+        p2 = np.array([r * np.cos(b), r * np.sin(b)])
+        u = np.linspace(0, 1, m)[:, None]
+        # control point at the origin: pull scales with angular separation, so
+        # near neighbours keep a shallow chord and opposite pairs bow deeply
+        p1 = np.zeros(2) * 0.0
+        pts = (1 - u) ** 2 * p0 + 2 * (1 - u) * u * p1 + u ** 2 * p2
+        return pts[:, 0], pts[:, 1]
+
+    ax, ay = _arc(t0, t1, r)
+    bx, by = bez(t1, s0)
+    cx, cy = _arc(s0, s1, r)
+    dx, dy = bez(s1, t0)
+    return np.concatenate([ax, bx, cx, dx]), np.concatenate([ay, by, cy, dy])
+
+
+_PALETTE = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B3", "#937860",
+            "#DA8BC3", "#8C8C8C", "#CCB974", "#64B5CD", "#E377C2", "#7F7F7F"]
+
+
+def _circle_panel(mat, geom, colors, sender, receiver, gap=0.02, r=1.0):
+    """Traces for one chord diagram; returns (traces, annotations).
+
+    ``geom`` sizes the arcs and ``mat`` supplies the chords. They are separate so
+    a multi-panel contrast can share one geometry: sizing each panel from its own
+    totals would rescale the arcs independently, and a cell type with fewer edges
+    would render as a different-sized node rather than as the same node sending
+    less.
+    """
+    types = list(geom.index)
+    total = (geom.sum(axis=1) + geom.sum(axis=0)).reindex(types).fillna(0).values
+    if total.sum() <= 0:
+        return [], []
+    span = (2 * np.pi - gap * len(types)) * total / total.sum()
+    start = np.cumsum(np.r_[0.0, span[:-1]] + gap) - gap
+    pos = {t: (start[i], start[i] + span[i]) for i, t in enumerate(types)}
+
+    traces = []
+    for i, t in enumerate(types):                      # node arcs
+        x, y = _arc(*pos[t], r=r)
+        xo, yo = _arc(pos[t][1], pos[t][0], r=r * 1.06)
+        traces.append(go.Scatter(
+            x=np.r_[x, xo], y=np.r_[y, yo], fill="toself", mode="lines",
+            line=dict(width=0), fillcolor=colors[t], hoverinfo="text",
+            text=f"{t}<br>out {int(mat.loc[t].sum())} / in {int(mat[t].sum())}",
+            showlegend=False))
+
+    # Each sender's outgoing edges consume its arc left to right, and each
+    # receiver's incoming edges consume its own arc, so a chord lands on a
+    # distinct slice at both ends rather than every chord stacking on the arc
+    # midpoint -- which is what makes the widths readable as counts.
+    out_cur = {t: pos[t][0] for t in types}
+    in_cur = {t: pos[t][0] for t in types}
+    out_tot = geom.sum(axis=1)
+    in_tot = geom.sum(axis=0)
+    for s in types:
+        for rc in types:
+            v = float(mat.loc[s, rc])
+            if v <= 0:
+                continue
+            ws = span[types.index(s)] * v / max(out_tot[s] + in_tot[s], 1e-9)
+            wr = span[types.index(rc)] * v / max(out_tot[rc] + in_tot[rc], 1e-9)
+            t0, t1 = out_cur[s], out_cur[s] + ws
+            s0, s1 = in_cur[rc], in_cur[rc] + wr
+            out_cur[s] = t1
+            in_cur[rc] = s1
+            visible = ((sender is None or s in sender)
+                       and (receiver is None or rc in receiver))
+            x, y = _ribbon(t0, t1, s0, s1, r * 0.98)
+            traces.append(go.Scatter(
+                x=x, y=y, fill="toself", mode="lines", line=dict(width=0),
+                fillcolor=colors[s] if visible else "rgba(0,0,0,0)",
+                opacity=0.55 if visible else 0.0, hoverinfo="text",
+                text=f"{s} -> {rc}: {int(v)} edges", showlegend=False))
+
+    ann = []
+    for t in types:
+        a = np.mean(pos[t])
+        ann.append(dict(x=r * 1.16 * np.cos(a), y=r * 1.16 * np.sin(a), text=t,
+                        showarrow=False, font=dict(size=11),
+                        xanchor="left" if np.cos(a) >= 0 else "right"))
+    return traces, ann
+
+
+def ccc_circle(
+    ccc: Any,
+    *,
+    compare_to: Any = None,
+    labels: tuple = ("Case", "Control"),
+    colors: Any = None,
+    sender: Any = None,
+    receiver: Any = None,
+    title: str | None = None,
+) -> go.Figure:
+    """Chord diagram of sender -> receiver secreted-protein communication.
+
+    Python port of R SecAct's ``SecAct.CCC.circle`` (``circlize::chordDiagram``).
+    Cell types sit on a circle with arc length proportional to their total
+    interaction count; each chord is one sender -> receiver pair with width
+    proportional to the number of significant secreted-protein edges, coloured by
+    the SENDER so direction is readable without arrowheads.
+
+    Parameters
+    ----------
+    ccc : DataFrame or dict
+        Edge table (``secreted_protein_ccc``) or the full result dict from
+        :func:`secactpy.secact_ccc_scrnaseq`.
+    compare_to : DataFrame or dict, optional
+        A second edge table drawn beside the first as a **contrast** — e.g.
+        responder vs non-responder. Both panels share one cell-type ordering,
+        one colour map, and one arc geometry derived from the COMBINED totals,
+        so the two circles are visually comparable; drawing each panel on its own
+        geometry would rescale the arcs independently and make a cell type that
+        merely has fewer edges look like a different cell type.
+    labels : tuple
+        Panel titles when ``compare_to`` is given.
+    colors : dict or list, optional
+        Cell-type colours. A dict maps names to colours; a list is cycled.
+    sender, receiver : str or iterable, optional
+        Restrict which chords are drawn, as R's ``sender``/``receiver`` do:
+        the arcs stay in place and non-matching chords become transparent, so
+        the filtered view keeps the same geometry as the unfiltered one.
+    title : str, optional
+
+    Returns
+    -------
+    plotly.graph_objects.Figure
+    """
+    from plotly.subplots import make_subplots
+
+    m1 = _ccc_matrix(ccc)
+    m2 = _ccc_matrix(compare_to) if compare_to is not None else None
+    if m1.empty and (m2 is None or m2.empty):
+        return _empty_figure("No cell-cell communication edges to plot")
+
+    # One shared cell-type universe and one shared geometry across panels.
+    types = sorted(set(m1.index) | (set(m2.index) if m2 is not None else set()))
+    m1 = m1.reindex(index=types, columns=types, fill_value=0) if not m1.empty \
+        else pd.DataFrame(0, index=types, columns=types)
+    if m2 is not None:
+        m2 = m2.reindex(index=types, columns=types, fill_value=0) if not m2.empty \
+            else pd.DataFrame(0, index=types, columns=types)
+
+    if isinstance(colors, dict):
+        cmap = {t: colors.get(t, _PALETTE[i % len(_PALETTE)]) for i, t in enumerate(types)}
+    else:
+        pal = list(colors) if colors is not None else _PALETTE
+        cmap = {t: pal[i % len(pal)] for i, t in enumerate(types)}
+
+    if isinstance(sender, str):
+        sender = [sender]
+    if isinstance(receiver, str):
+        receiver = [receiver]
+
+    mats = [m1] if m2 is None else [m1, m2]
+    # Shared arc geometry: sized by the COMBINED totals so a chord of the same
+    # width means the same count in either panel.
+    geom = sum(mats)
+    fig = make_subplots(rows=1, cols=len(mats),
+                        subplot_titles=list(labels[:len(mats)]) if m2 is not None else None,
+                        horizontal_spacing=0.06)
+    for k, m in enumerate(mats):
+        traces, ann = _circle_panel(m, geom, cmap, sender, receiver)
+        for tr in traces:
+            fig.add_trace(tr, row=1, col=k + 1)
+        for a in ann:
+            fig.add_annotation(a, row=1, col=k + 1)
+
+    for k in range(len(mats)):
+        fig.update_xaxes(visible=False, range=[-1.45, 1.45], row=1, col=k + 1)
+        fig.update_yaxes(visible=False, range=[-1.45, 1.45],
+                         scaleanchor=("x" if k == 0 else f"x{k + 1}"),
+                         row=1, col=k + 1)
+    fig.update_layout(
+        title=dict(text=title or "", x=0.5, xanchor="center"),
+        template="plotly_white", showlegend=False,
+        margin=dict(l=10, r=10, t=60 if title else 34, b=10))
+    return fig
