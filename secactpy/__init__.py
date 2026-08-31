@@ -123,6 +123,9 @@ from .inference import (
     secact_activity_inference_st,
 )
 
+# Cell-cell communication
+from .ccc import secact_ccc_scrnaseq
+
 # I/O utilities
 from .io import (
     ANNDATA_AVAILABLE,
@@ -214,6 +217,7 @@ __all__ = [
     "secact_activity",
     "secact_activity_inference",
     "secact_activity_inference_scrnaseq",
+    "secact_ccc_scrnaseq",
     "secact_activity_inference_st",
     "load_visium_10x",
     "load_expression_data",
