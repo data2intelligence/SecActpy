@@ -149,6 +149,7 @@ try:
         celltype_expression_boxplot,
         gene_expression_stats,
         risk_lollipop,
+        secreted_protein_heatmap,
         spatial_density,
     )
 except ImportError:
@@ -260,6 +261,7 @@ __all__ = [
     "spatial_density",
     "activity_change_bar",
     "risk_lollipop",
+    "secreted_protein_heatmap",
     # Downstream analysis
     "coxph_regression",
     "signaling_pattern",

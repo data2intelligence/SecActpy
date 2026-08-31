@@ -22,10 +22,13 @@ __all__ = [
     "spatial_density",
     "activity_change_bar",
     "risk_lollipop",
+    "secreted_protein_heatmap",
 ]
 
 _PRIMARY = "#3498db"
 _ACCENT = "#e74c3c"
+# SecAct heatmap gradient (low -> high activity), matching R SecAct.heatmap.plot
+_SECACT_HEATMAP_COLORS = ["#03c383", "#aad962", "#fbbf45", "#ef6a32"]
 
 
 def activity_distribution(
@@ -347,6 +350,100 @@ def risk_lollipop(
         xaxis_title="Risk Score (z-score)",
         template="plotly_white",
         height=max(400, len(selected) * 20),
+    )
+    return fig
+
+
+def secreted_protein_heatmap(
+    activity: pd.DataFrame,
+    *,
+    top_n: int | None = None,
+    title: str | None = None,
+    colors: list[str] | None = None,
+) -> go.Figure:
+    """Secreted-protein activity heatmap per cell type.
+
+    Python port of R SecAct's ``SecAct.heatmap.plot``: a tile heatmap with
+    secreted proteins on the rows, cell types on the columns, and per-cell-type
+    activity z-scores as the fill, on SecAct's green -> lime -> amber -> orange
+    gradient. Rows read top-to-bottom in the matrix's order (first row on top),
+    x labels are rotated 90 degrees, and tiles are separated by thin white gaps
+    -- the same look as the R ``geom_tile`` version.
+
+    The typical input is the ``zscore`` matrix returned by
+    :func:`secactpy.secact_activity_inference_scrnaseq` (proteins x cell types).
+
+    Parameters
+    ----------
+    activity : DataFrame
+        Activity matrix, proteins (rows) x cell types (columns). Values are the
+        activity z-scores; positive = high activity, negative = low.
+    top_n : int, optional
+        If given, keep only the union of the top-``top_n`` most active proteins
+        in each cell type -- the vignette's pre-selection (top 10 per cell
+        state) -- and order the surviving rows by the cell type they peak in.
+        Default ``None`` plots the matrix exactly as given, like the R function.
+    title : str, optional
+        Centered plot title.
+    colors : list of str, optional
+        Gradient colors, low -> high. Default is SecAct's 4-stop palette.
+
+    Returns
+    -------
+    plotly.graph_objects.Figure
+
+    Examples
+    --------
+    >>> res = secactpy.secact_activity_inference_scrnaseq(adata, cell_type_col="Annotation")
+    >>> fig = secreted_protein_heatmap(res["zscore"], top_n=10)
+    >>> fig.show()
+    """
+    colors = list(colors) if colors else _SECACT_HEATMAP_COLORS
+    if not isinstance(activity, pd.DataFrame):
+        activity = pd.DataFrame(activity)
+
+    mat = activity.dropna(how="all").dropna(axis=1, how="all")
+    if mat.empty:
+        return _empty_figure("No activity values to plot")
+    mat = mat.astype(float)
+
+    if top_n is not None and top_n > 0 and mat.shape[0] > 1:
+        keep, seen = [], set()
+        for ct in mat.columns:
+            for protein in mat[ct].sort_values(ascending=False).head(top_n).index:
+                if protein not in seen:
+                    seen.add(protein)
+                    keep.append(protein)
+        # order rows by the cell type each protein peaks in (column order),
+        # then by descending peak activity -> a readable block structure
+        col_rank = {c: i for i, c in enumerate(mat.columns)}
+        peak_ct = mat.loc[keep].idxmax(axis=1)
+        keep.sort(key=lambda p: (col_rank[peak_ct[p]], -float(mat.loc[p, peak_ct[p]])))
+        mat = mat.loc[keep]
+
+    # even-stop colorscale from the gradient colors == R scale_fill_gradientn
+    if len(colors) == 1:
+        colorscale = [[0.0, colors[0]], [1.0, colors[0]]]
+    else:
+        colorscale = [[i / (len(colors) - 1), c] for i, c in enumerate(colors)]
+
+    # Plotly draws z[0] at the bottom; R shows the first matrix row on top, so
+    # reverse rows to match (first protein ends up at the top).
+    fig = go.Figure(go.Heatmap(
+        z=mat.values[::-1],
+        x=[str(c) for c in mat.columns],
+        y=[str(r) for r in mat.index[::-1]],
+        colorscale=colorscale,
+        xgap=1, ygap=1,
+        colorbar=dict(title="Activity"),
+        hovertemplate="protein: %{y}<br>cell type: %{x}<br>activity: %{z:.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        title=dict(text=title or "", x=0.5, xanchor="center"),
+        template="plotly_white",
+        xaxis=dict(side="bottom", tickangle=90, title=None, ticks="", constrain="domain"),
+        yaxis=dict(title=None, ticks="", automargin=True),
+        margin=dict(l=10, r=10, t=44 if title else 20, b=10),
     )
     return fig
 
