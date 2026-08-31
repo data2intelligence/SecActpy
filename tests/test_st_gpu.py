@@ -385,7 +385,6 @@ def main(input_file=None, reference=None, cosmx=False, gpu_only=False, save_outp
             seed=SEED,
             sig_filter=sig_filter,
             backend="numpy",
-            use_gsl_rng=True,
             use_cache=True,
             verbose=False
         )
@@ -410,7 +409,6 @@ def main(input_file=None, reference=None, cosmx=False, gpu_only=False, save_outp
         seed=SEED,
         sig_filter=sig_filter,
         backend="cupy",
-        use_gsl_rng=True,
         use_cache=True,
         verbose=True
     )

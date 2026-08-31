@@ -434,7 +434,6 @@ def secact_activity(
     scale: Literal["zscore", "center", "none"] = "zscore",
     backend: Literal["auto", "numpy", "cupy"] = "auto",
     min_genes: int = 10,
-    use_gsl_rng: bool = True,
     rng_method: Literal["srand", "gsl", "numpy", None] = "srand",
     use_cache: bool = False,
     batch_size: Optional[int] = None,
@@ -473,18 +472,14 @@ def secact_activity(
         Computation backend.
     min_genes : int, default=10
         Minimum number of overlapping genes required.
-    use_gsl_rng : bool, default=True
-        Use GSL-compatible RNG for exact R SecAct reproducibility.
-        Set to False for faster inference (~70x faster permutation generation)
-        when exact R matching is not needed.
-        Ignored when ``rng_method`` is set.
-    rng_method : {"srand", "gsl", "numpy", None}, default=None
-        Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
+    rng_method : {"srand", "gsl", "mt19937", "numpy", None}, default="srand"
+        The RNG that generates the permutation table.
 
         - ``"srand"``: C stdlib srand/rand (matches R SecAct behavior)
-        - ``"gsl"``: GSL random number generator
+        - ``"gsl"`` / ``"mt19937"``: GSL MT19937 (cross-language canonical
+          name shared with the flashreg / flashregpy accelerators)
         - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
-        - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility
+        - ``None``: same as ``"numpy"`` (fast NumPy RNG, non-reproducible)
     use_cache : bool, default=False
         Cache permutation tables to disk for reuse. Enable when running
         multiple analyses with the same gene count for faster repeated runs.
@@ -600,7 +595,6 @@ def secact_activity(
             seed=seed,
             batch_size=batch_size,
             backend=backend,
-            use_gsl_rng=use_gsl_rng,
             rng_method=rng_method,
             use_cache=use_cache,
             sparse_mode=sparse_mode,
@@ -614,7 +608,6 @@ def secact_activity(
             n_rand=n_rand,
             seed=seed,
             backend=backend,
-            use_gsl_rng=use_gsl_rng,
             rng_method=rng_method,
             use_cache=use_cache,
             sparse_mode=sparse_mode,
@@ -942,7 +935,6 @@ def secact_activity_inference(
     sig_filter: bool = False,
     gene_col: Optional[Union[str, int]] = None,
     backend: str = "numpy",
-    use_gsl_rng: bool = True,
     rng_method: Literal["srand", "gsl", "numpy", None] = "srand",
     use_cache: bool = False,
     batch_size: Optional[int] = None,
@@ -1008,17 +1000,14 @@ def secact_activity_inference(
         Use gene_col=0 if genes are in the first column.
     backend : str, default="numpy"
         Computation backend ("numpy" or "cupy").
-    use_gsl_rng : bool, default=True
-        Use GSL-compatible RNG for exact R SecAct reproducibility.
-        Set to False for faster inference when R matching is not needed.
-        Ignored when ``rng_method`` is set.
-    rng_method : {"srand", "gsl", "numpy", None}, default=None
-        Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
+    rng_method : {"srand", "gsl", "mt19937", "numpy", None}, default="srand"
+        The RNG that generates the permutation table.
 
         - ``"srand"``: C stdlib srand/rand (matches R SecAct behavior)
-        - ``"gsl"``: GSL random number generator
+        - ``"gsl"`` / ``"mt19937"``: GSL MT19937 (cross-language canonical
+          name shared with the flashreg / flashregpy accelerators)
         - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
-        - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility
+        - ``None``: same as ``"numpy"`` (fast NumPy RNG, non-reproducible)
     use_cache : bool, default=False
         Cache permutation tables to disk for reuse. Enable when running
         multiple analyses with the same gene count for faster repeated runs.
@@ -1228,7 +1217,6 @@ def secact_activity_inference(
             seed=seed,
             batch_size=batch_size,
             backend=backend,
-            use_gsl_rng=use_gsl_rng,
             rng_method=rng_method,
             use_cache=use_cache,
             output_path=output_path,
@@ -1246,7 +1234,6 @@ def secact_activity_inference(
             n_rand=n_rand,
             seed=seed,
             backend=backend,
-            use_gsl_rng=use_gsl_rng,
             rng_method=rng_method,
             use_cache=use_cache,
             sparse_mode=sparse_mode,
@@ -1347,7 +1334,6 @@ def secact_activity_inference_scrnaseq(
     seed: int = 0,
     sig_filter: bool = False,
     backend: str = "auto",
-    use_gsl_rng: bool = True,
     rng_method: Literal["srand", "gsl", "numpy", None] = "srand",
     use_cache: bool = False,
     batch_size: Optional[int] = None,
@@ -1394,17 +1380,14 @@ def secact_activity_inference_scrnaseq(
         If True, filter signatures by available genes.
     backend : str, default="auto"
         Computation backend: "auto", "numpy", "cupy".
-    use_gsl_rng : bool, default=True
-        Use GSL-compatible RNG for exact R SecAct reproducibility.
-        Set to False for faster inference when R matching is not needed.
-        Ignored when ``rng_method`` is set.
-    rng_method : {"srand", "gsl", "numpy", None}, default=None
-        Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
+    rng_method : {"srand", "gsl", "mt19937", "numpy", None}, default="srand"
+        The RNG that generates the permutation table.
 
         - ``"srand"``: C stdlib srand/rand (matches R SecAct behavior)
-        - ``"gsl"``: GSL random number generator
+        - ``"gsl"`` / ``"mt19937"``: GSL MT19937 (cross-language canonical
+          name shared with the flashreg / flashregpy accelerators)
         - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
-        - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility
+        - ``None``: same as ``"numpy"`` (fast NumPy RNG, non-reproducible)
     use_cache : bool, default=False
         Cache permutation tables to disk for reuse.
     batch_size : int, optional
@@ -1512,7 +1495,6 @@ def secact_activity_inference_scrnaseq(
             seed=seed,
             sig_filter=sig_filter,
             backend=backend,
-            use_gsl_rng=use_gsl_rng,
             rng_method=rng_method,
             use_cache=use_cache,
             batch_size=batch_size if batch_size is not None else 5000,
@@ -1749,7 +1731,6 @@ def secact_activity_inference_scrnaseq(
                 seed=seed,
                 batch_size=_batch_size,
                 backend=backend,
-                use_gsl_rng=use_gsl_rng,
                 rng_method=rng_method,
                 use_cache=use_cache,
                 output_path=output_path,
@@ -1810,7 +1791,6 @@ def secact_activity_inference_scrnaseq(
         seed=seed,
         sig_filter=sig_filter,
         backend=backend,
-        use_gsl_rng=use_gsl_rng,
         rng_method=rng_method,
         use_cache=use_cache,
         batch_size=batch_size,
@@ -2006,7 +1986,6 @@ def secact_activity_inference_st(
     sig_filter: bool = False,
     min_genes: int = 0,
     backend: str = "auto",
-    use_gsl_rng: bool = True,
     rng_method: Literal["srand", "gsl", "numpy", None] = "srand",
     use_cache: bool = False,
     batch_size: Optional[int] = None,
@@ -2062,17 +2041,14 @@ def secact_activity_inference_st(
         Minimum genes per spot (only used if input_data is a path).
     backend : str, default="auto"
         Computation backend: "auto", "numpy", "cupy".
-    use_gsl_rng : bool, default=True
-        Use GSL-compatible RNG for exact R SecAct reproducibility.
-        Set to False for faster inference when R matching is not needed.
-        Ignored when ``rng_method`` is set.
-    rng_method : {"srand", "gsl", "numpy", None}, default=None
-        Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
+    rng_method : {"srand", "gsl", "mt19937", "numpy", None}, default="srand"
+        The RNG that generates the permutation table.
 
         - ``"srand"``: C stdlib srand/rand (matches R SecAct behavior)
-        - ``"gsl"``: GSL random number generator
+        - ``"gsl"`` / ``"mt19937"``: GSL MT19937 (cross-language canonical
+          name shared with the flashreg / flashregpy accelerators)
         - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
-        - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility
+        - ``None``: same as ``"numpy"`` (fast NumPy RNG, non-reproducible)
     use_cache : bool, default=False
         Cache permutation tables to disk for reuse.
     batch_size : int, optional
@@ -2184,7 +2160,6 @@ def secact_activity_inference_st(
             seed=seed,
             sig_filter=sig_filter,
             backend=backend,
-            use_gsl_rng=use_gsl_rng,
             rng_method=rng_method,
             use_cache=use_cache,
             batch_size=batch_size if batch_size is not None else 5000,
@@ -2363,7 +2338,6 @@ def secact_activity_inference_st(
             seed=seed,
             batch_size=_batch_size,
             backend=backend,
-            use_gsl_rng=use_gsl_rng,
             rng_method=rng_method,
             use_cache=use_cache,
             output_path=output_path,
@@ -2510,7 +2484,6 @@ def secact_activity_inference_st(
         seed=seed,
         sig_filter=sig_filter,
         backend=backend,
-        use_gsl_rng=use_gsl_rng,
         rng_method=rng_method,
         use_cache=use_cache,
         batch_size=batch_size,

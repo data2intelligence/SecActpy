@@ -51,33 +51,33 @@ from .rng import (
     get_cached_inverse_perm_table,
 )
 
-# Map rng_method names to RNG classes
+# Map rng_method names to RNG classes. "mt19937" is the cross-language
+# canonical name for the GSL MT19937 generator used by the flashreg /
+# flashregpy accelerators; it is accepted here as an alias of "gsl" so a
+# configuration can be shared verbatim across the packages.
 _RNG_CLASSES = {
     'srand': CStdlibRNG,
     'gsl': GSLRNG,
+    'mt19937': GSLRNG,
 }
 
 
-def _get_rng(rng_method, use_gsl_rng, seed):
-    """Resolve RNG from rng_method/use_gsl_rng parameters.
+def _get_rng(rng_method, seed):
+    """Resolve the deterministic RNG from ``rng_method``.
 
-    Returns (rng_instance, use_deterministic_rng: bool).
-    If use_deterministic_rng is False, use fast NumPy RNG instead.
+    Returns ``(rng_instance, use_deterministic_rng)``. ``"numpy"`` and
+    ``None`` have no deterministic permutation-table generator, so the caller
+    falls back to the fast NumPy RNG (``use_deterministic_rng=False``).
     """
-    if rng_method is not None:
-        if rng_method == 'numpy':
-            return None, False
-        cls = _RNG_CLASSES.get(rng_method)
-        if cls is None:
-            raise ValueError(
-                f"Unknown rng_method={rng_method!r}. "
-                f"Choose from: 'srand', 'gsl', 'numpy'"
-            )
-        return cls(seed), True
-    # Fallback to use_gsl_rng for backward compatibility
-    if use_gsl_rng:
-        return CStdlibRNG(seed), True
-    return None, False
+    if rng_method is None or rng_method == 'numpy':
+        return None, False
+    cls = _RNG_CLASSES.get(rng_method)
+    if cls is None:
+        raise ValueError(
+            f"Unknown rng_method={rng_method!r}. "
+            f"Choose from: 'srand', 'gsl', 'mt19937', 'numpy'"
+        )
+    return cls(seed), True
 
 __all__ = ['ridge', 'CUPY_AVAILABLE', 'CUDA_NATIVE_AVAILABLE', 'resolve_backend']
 
@@ -196,8 +196,7 @@ def ridge(
     n_rand: int = DEFAULT_NRAND,
     seed: int = DEFAULT_SEED,
     backend: Literal["auto", "numpy", "cupy", "cuda_native"] = "auto",
-    use_gsl_rng: bool = True,
-    rng_method: Literal["srand", "gsl", "numpy", None] = "srand",
+    rng_method: Literal["srand", "gsl", "mt19937", "numpy", None] = "srand",
     use_cache: bool = False,
     sparse_mode: bool = False,
     col_center: bool = True,
@@ -230,17 +229,16 @@ def ridge(
         - "auto": Use CuPy if available, else NumPy
         - "numpy": Force CPU computation
         - "cupy": Force GPU computation (raises error if unavailable)
-    use_gsl_rng : bool, default=True
-        Use GSL-compatible RNG for exact R SecAct reproducibility.
-        Set to False for faster inference (~70x faster) when R matching is not needed.
-        Ignored when ``rng_method`` is set.
-    rng_method : {"srand", "gsl", "numpy", None}, default=None
-        Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
+    rng_method : {"srand", "gsl", "mt19937", "numpy", None}, default="srand"
+        The RNG that generates the permutation table.
 
         - ``"srand"``: C stdlib srand/rand (matches R SecAct behavior)
-        - ``"gsl"``: GSL random number generator
+        - ``"gsl"`` / ``"mt19937"``: GSL MT19937 generator. ``"mt19937"`` is
+          the cross-language canonical name used by the flashreg /
+          flashregpy accelerators, accepted here so a configuration can be
+          shared verbatim across the packages.
         - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
-        - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility
+        - ``None``: same as ``"numpy"`` (fast NumPy RNG, non-reproducible)
     use_cache : bool, default=False
         Cache permutation tables to disk for reuse. Enable when running
         multiple analyses with the same gene count.
@@ -357,7 +355,14 @@ def ridge(
         Y = np.asarray(Y, dtype=np.float64)
         is_sparse_Y = False
 
-    if is_sparse_Y:
+    if n_rand == 0:
+        # The analytical t-test is dense CPU linear algebra for every
+        # backend — the GPU and sparse *permutation* kernels do not
+        # implement it, so any backend falls through to the single numpy
+        # reference (mirrors flashregpy._ridge_ttest_fallthrough). Sparse Y
+        # was densified above, so X @ beta residuals are well-defined here.
+        result = _ridge_ttest_numpy(X, Y, lambda_, verbose)
+    elif is_sparse_Y:
         # cuda_native: when the loaded libridgecuda_native.so exposes
         # ridge_cuda_sparse (RidgeCuda v0.2+ / commit 5eb3130 onward),
         # route sparse Y through the compiled cusparseSpMM kernel —
@@ -365,24 +370,23 @@ def ridge(
         # and avoids the CuPy fallback. Older builds fall back to CuPy.
         if backend == "cuda_native" and _cuda_native_has_sparse():
             result = _ridge_sparse_cuda_native_dispatch(
-                X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method,
+                X, Y, lambda_, n_rand, seed, rng_method,
                 use_cache, verbose, col_center=col_center, col_scale=col_scale)
         elif backend in ("cupy", "cuda_native"):
-            result = _ridge_sparse_cupy(X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method, use_cache, verbose, col_center=col_center, col_scale=col_scale)
+            result = _ridge_sparse_cupy(X, Y, lambda_, n_rand, seed, rng_method, use_cache, verbose, col_center=col_center, col_scale=col_scale)
         else:
-            result = _ridge_sparse_permutation_numpy(X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method, use_cache, verbose, col_center=col_center, col_scale=col_scale)
+            result = _ridge_sparse_permutation_numpy(X, Y, lambda_, n_rand, seed, rng_method, use_cache, verbose, col_center=col_center, col_scale=col_scale)
     elif backend == "cuda_native":
-        result = _ridge_cuda_native_dense(X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method, use_cache, verbose)
+        result = _ridge_cuda_native_dense(X, Y, lambda_, n_rand, seed, rng_method, use_cache, verbose)
     elif backend == "cupy":
-        result = _ridge_cupy(X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method, use_cache, verbose)
+        result = _ridge_cupy(X, Y, lambda_, n_rand, seed, rng_method, use_cache, verbose)
     else:
-        if n_rand == 0:
-            result = _ridge_ttest_numpy(X, Y, lambda_, verbose)
-        else:
-            result = _ridge_permutation_numpy(X, Y, lambda_, n_rand, seed, use_gsl_rng, rng_method, use_cache, verbose)
+        result = _ridge_permutation_numpy(X, Y, lambda_, n_rand, seed, rng_method, use_cache, verbose)
 
     # --- Add Metadata ---
-    result['method'] = backend
+    # n_rand=0 always runs the numpy t-test regardless of the requested
+    # backend; tag it so callers can tell the analytical path was taken.
+    result['method'] = f"{backend}_ttest" if n_rand == 0 else backend
     result['time'] = time.time() - start_time
 
     if verbose:
@@ -401,7 +405,6 @@ def _ridge_permutation_numpy(
     lambda_: float,
     n_rand: int,
     seed: int,
-    use_gsl_rng: bool,
     rng_method: str,
     use_cache: bool,
     verbose: bool
@@ -451,7 +454,7 @@ def _ridge_permutation_numpy(
     # appear ~3× slower than .ridge_pureR on small fixtures.
     use_yrow = n_samples < n_features
 
-    rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
+    rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
         if use_cache:
             inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
@@ -575,21 +578,31 @@ def _ridge_ttest_numpy(
     # Residual sum of squares per sample
     rss = np.sum(residuals ** 2, axis=0)  # (n_samples,)
 
-    # Degrees of freedom
-    df = n_genes - n_features
+    # Effective degrees of freedom for ridge: df = n - tr(H), where the
+    # ridge hat matrix H = X (X'X + λI)^{-1} X' and
+    # tr(H) = tr((X'X + λI)^{-1} X'X). OLS df = n - p over-counts the
+    # effective number of parameters at λ > 0 (the ridge shrinkage uses
+    # fewer effective dof). Matches flashregpy._ridge_ttest_numpy so the
+    # analytical path is bit-identical to the flashreg accelerator.
+    XtX_inv_XtX = XtX_inv @ XtX
+    trH = float(np.trace(XtX_inv_XtX))
+    df = n_genes - trH
     if df <= 0:
         warnings.warn(
-            f"Degrees of freedom <= 0 ({df}). "
+            f"Effective degrees of freedom <= 0 ({df:.3g}). "
             "Results may be unreliable. Consider using permutation test."
         )
-        df = max(df, 1)  # Prevent division by zero
+        df = max(df, 1.0)  # Prevent division by zero
 
     # Residual variance per sample
     sigma2 = rss / df  # (n_samples,)
 
-    # Standard errors
-    # SE_ij = sqrt(XtX_inv[i,i] * sigma2[j])
-    var_beta_diag = np.diag(XtX_inv)  # (n_features,)
+    # Standard errors from the ridge sandwich covariance:
+    #   Cov(β) = σ² (X'X + λI)^{-1} X'X (X'X + λI)^{-1}
+    # The plain OLS form σ² diag((X'X + λI)^{-1}) drops the central X'X
+    # and badly overstates SE at λ ≫ 0 (e.g. ~8× at λ = 5e5).
+    sandwich = XtX_inv_XtX @ XtX_inv  # (X'X+λI)^-1 X'X (X'X+λI)^-1
+    var_beta_diag = np.clip(np.diag(sandwich), 0.0, None)  # (n_features,)
     se = np.sqrt(np.outer(var_beta_diag, sigma2))  # (n_features, n_samples)
 
     # --- Step 4: T-statistics and p-values ---
@@ -619,7 +632,6 @@ def _ridge_cuda_native_dense(
     lambda_: float,
     n_rand: int,
     seed: int,
-    use_gsl_rng: bool,
     rng_method: str,
     use_cache: bool,
     verbose: bool,
@@ -636,9 +648,12 @@ def _ridge_cuda_native_dense(
     available; resolve_backend already gates that case.
     """
     if n_rand == 0:
+        # Internal guard: the public ridge() dispatch routes n_rand=0 to the
+        # numpy t-test for every backend, so this branch is not reached from
+        # there. It stays as a contract check for any direct internal caller.
         raise NotImplementedError(
-            "t-test (n_rand=0) not implemented for cuda_native; "
-            "use backend='numpy' for t-test.")
+            "_ridge_cuda_native_dense does not compute the analytical t-test "
+            "(n_rand=0); call ridge(), which runs it on numpy for any backend.")
 
     # Generate inverse permutation table.
     # Fast path: when rng_method='srand' and the bundled .so has the
@@ -646,7 +661,7 @@ def _ridge_cuda_native_dense(
     # CStdlibRNG loop, byte-equivalent at the same seed). Otherwise fall
     # back to the same paths the CuPy backend uses so the perm tables
     # remain identical.
-    rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
+    rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if (rng_method == "srand" and not use_cache
             and _build_inv_perm_native is not None):
         inv_perm_table = _build_inv_perm_native(X.shape[0], n_rand, seed)
@@ -675,7 +690,6 @@ def _ridge_sparse_cuda_native_dispatch(
     lambda_: float,
     n_rand: int,
     seed: int,
-    use_gsl_rng: bool,
     rng_method: str,
     use_cache: bool,
     verbose: bool,
@@ -697,9 +711,11 @@ def _ridge_sparse_cuda_native_dispatch(
     `_cuda_native_has_sparse()`.
     """
     if n_rand == 0:
+        # Internal guard (see _ridge_cuda_native_dense): ridge() handles the
+        # n_rand=0 t-test on numpy; sparse Y is densified there first.
         raise NotImplementedError(
-            "t-test (n_rand=0) not implemented for cuda_native sparse; "
-            "use backend='numpy' for t-test.")
+            "sparse cuda_native does not compute the analytical t-test "
+            "(n_rand=0); call ridge(), which runs it on numpy for any backend.")
     # In-flight column normalization is now done INSIDE the CUDA kernel
     # (RidgeCuda commit, applyColCorrection in ridge_cuda_sparse). We
     # compute μ/σ once on the host using SecActpy's _sparse_col_stats
@@ -716,7 +732,7 @@ def _ridge_sparse_cuda_native_dispatch(
 
     # Build the inverse permutation table the same way the dense path does
     # so dense ≡ sparse at the same seed.
-    rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
+    rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if (rng_method == "srand" and not use_cache
             and _build_inv_perm_native is not None):
         inv_perm_table = _build_inv_perm_native(X.shape[0], n_rand, seed)
@@ -750,7 +766,6 @@ def _ridge_cupy(
     lambda_: float,
     n_rand: int,
     seed: int,
-    use_gsl_rng: bool,
     rng_method: str,
     use_cache: bool,
     verbose: bool
@@ -767,9 +782,11 @@ def _ridge_cupy(
         raise RuntimeError("CuPy not available")
 
     if n_rand == 0:
+        # Internal guard (see _ridge_cuda_native_dense): ridge() runs the
+        # n_rand=0 t-test on numpy for every backend.
         raise NotImplementedError(
-            "T-test (n_rand=0) not implemented for CuPy backend. "
-            "Use backend='numpy' for t-test."
+            "_ridge_cupy does not compute the analytical t-test (n_rand=0); "
+            "call ridge(), which runs it on numpy for any backend."
         )
 
     n_genes, n_features = X.shape
@@ -825,7 +842,7 @@ def _ridge_cupy(
 
     # Generate inverse permutation table on CPU
     # T[:, inv_perm] @ Y == T @ Y[perm, :] (mathematically equivalent)
-    rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
+    rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
         if use_cache:
             inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
@@ -966,7 +983,6 @@ def _ridge_sparse_permutation_numpy(
     lambda_: float,
     n_rand: int,
     seed: int,
-    use_gsl_rng: bool,
     rng_method: str,
     use_cache: bool,
     verbose: bool,
@@ -1036,7 +1052,7 @@ def _ridge_sparse_permutation_numpy(
     if verbose:
         print(f"  running {n_rand} permutations (sparse T-column method)...")
 
-    rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
+    rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
         if use_cache:
             inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
@@ -1099,7 +1115,6 @@ def _ridge_sparse_cupy(
     lambda_: float,
     n_rand: int,
     seed: int,
-    use_gsl_rng: bool,
     rng_method: str,
     use_cache: bool,
     verbose: bool,
@@ -1195,7 +1210,7 @@ def _ridge_sparse_cupy(
     if verbose:
         print(f"  running {n_rand} permutations on GPU (sparse T-column method)...")
 
-    rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
+    rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
         if use_cache:
             inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
@@ -1321,8 +1336,7 @@ def ridge_with_precomputed_T(
     Y: np.ndarray,
     n_rand: int = DEFAULT_NRAND,
     seed: int = DEFAULT_SEED,
-    use_gsl_rng: bool = True,
-    rng_method: Literal["srand", "gsl", "numpy", None] = "srand",
+    rng_method: Literal["srand", "gsl", "mt19937", "numpy", None] = "srand",
 ) -> dict[str, np.ndarray]:
     """
     Ridge regression using precomputed projection matrix.
@@ -1342,12 +1356,11 @@ def ridge_with_precomputed_T(
         Number of permutations.
     seed : int, default=0
         Random seed.
-    use_gsl_rng : bool, default=True
-        Deprecated. Use rng_method instead.
-    rng_method : {"srand", "gsl", "numpy", None}, default=None
-        RNG backend. "srand" matches R SecAct, "gsl" matches RidgeFast's GSL path
-        (cross-platform reproducible), "numpy" is fast. None falls back
-        to use_gsl_rng.
+    rng_method : {"srand", "gsl", "mt19937", "numpy", None}, default="srand"
+        RNG backend. "srand" matches R SecAct; "gsl"/"mt19937" is the GSL
+        MT19937 generator shared with the flashreg accelerators
+        (cross-platform reproducible); "numpy" (or None) is fast and
+        non-reproducible.
 
     Returns
     -------
@@ -1373,7 +1386,7 @@ def ridge_with_precomputed_T(
         )
 
     # Permutation testing with T-column permutation
-    rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
+    rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
         inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=False)
     else:

@@ -1049,7 +1049,6 @@ def _ridge_batch_sparse_path(
     seed: int,
     batch_size: int,
     backend: str,
-    use_gsl_rng: bool,
     rng_method: str,
     use_cache: bool,
     output_path: Optional[str],
@@ -1117,7 +1116,7 @@ def _ridge_batch_sparse_path(
     if verbose:
         print("  Loading inverse permutation table...")
 
-    rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
+    rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
         if use_cache:
             inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
@@ -1251,7 +1250,6 @@ def _ridge_batch_disk_path(
     seed: int,
     batch_size: int,
     backend: str,
-    use_gsl_rng: bool,
     rng_method: str,
     use_cache: bool,
     output_path: Optional[str],
@@ -1314,7 +1312,7 @@ def _ridge_batch_disk_path(
             T_gpu = None
 
     # --- permutation table ---
-    rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
+    rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
         if use_cache:
             inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
@@ -1406,7 +1404,6 @@ def ridge_batch(
     seed: int = DEFAULT_SEED,
     batch_size: int = 5000,
     backend: Literal["auto", "numpy", "cupy"] = "auto",
-    use_gsl_rng: bool = True,
     rng_method: str = "srand",
     use_cache: bool = False,
     output_path: Optional[str] = None,
@@ -1452,18 +1449,14 @@ def ridge_batch(
         Number of samples per batch.
     backend : {"auto", "numpy", "cupy"}, default="auto"
         Computation backend.
-    use_gsl_rng : bool, default=True
-        Use GSL-compatible RNG for exact R SecAct reproducibility.
-        Set to False for faster inference (~70x faster permutation
-        generation) when R matching is not needed.
-        Ignored when ``rng_method`` is set.
-    rng_method : {"srand", "gsl", "numpy", None}, default=None
-        Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
+    rng_method : {"srand", "gsl", "mt19937", "numpy", None}, default="srand"
+        The RNG that generates the permutation table.
 
         - ``"srand"``: C stdlib srand/rand (matches R SecAct behavior)
-        - ``"gsl"``: GSL random number generator
+        - ``"gsl"`` / ``"mt19937"``: GSL MT19937 (cross-language canonical
+          name shared with the flashreg / flashregpy accelerators)
         - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
-        - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility
+        - ``None``: same as ``"numpy"`` (fast NumPy RNG, non-reproducible)
     use_cache : bool, default=False
         Cache permutation tables to disk for reuse.
     output_path : str, optional
@@ -1533,7 +1526,7 @@ def ridge_batch(
         reader, is_sparse = _open_disk_y(Y, y_dataset_key)
         return _ridge_batch_disk_path(
             X=X, reader=reader, is_sparse=is_sparse, lambda_=lambda_, n_rand=n_rand,
-            seed=seed, batch_size=batch_size, backend=backend, use_gsl_rng=use_gsl_rng,
+            seed=seed, batch_size=batch_size, backend=backend,
             rng_method=rng_method, use_cache=use_cache, output_path=output_path,
             output_compression=output_compression, feature_names=feature_names,
             sample_names=sample_names, progress_callback=progress_callback,
@@ -1545,7 +1538,7 @@ def ridge_batch(
     if sps.issparse(Y):
         return _ridge_batch_sparse_path(
             X=X, Y=Y, lambda_=lambda_, n_rand=n_rand, seed=seed,
-            batch_size=batch_size, backend=backend, use_gsl_rng=use_gsl_rng, rng_method=rng_method,
+            batch_size=batch_size, backend=backend, rng_method=rng_method,
             use_cache=use_cache,
             output_path=output_path, output_compression=output_compression,
             feature_names=feature_names, sample_names=sample_names,
@@ -1615,7 +1608,7 @@ def ridge_batch(
     if verbose:
         print("  Loading inverse permutation table...")
 
-    rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
+    rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
         if use_cache:
             inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
