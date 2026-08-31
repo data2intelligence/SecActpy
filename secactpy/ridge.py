@@ -51,10 +51,14 @@ from .rng import (
     get_cached_inverse_perm_table,
 )
 
-# Map rng_method names to RNG classes
+# Map rng_method names to RNG classes. "mt19937" is the cross-language
+# canonical name for the GSL MT19937 generator used by the flashreg /
+# flashregpy accelerators; it is accepted here as an alias of "gsl" so a
+# configuration can be shared verbatim across the packages.
 _RNG_CLASSES = {
     'srand': CStdlibRNG,
     'gsl': GSLRNG,
+    'mt19937': GSLRNG,
 }
 
 
@@ -71,7 +75,7 @@ def _get_rng(rng_method, use_gsl_rng, seed):
         if cls is None:
             raise ValueError(
                 f"Unknown rng_method={rng_method!r}. "
-                f"Choose from: 'srand', 'gsl', 'numpy'"
+                f"Choose from: 'srand', 'gsl', 'mt19937', 'numpy'"
             )
         return cls(seed), True
     # Fallback to use_gsl_rng for backward compatibility
@@ -197,7 +201,7 @@ def ridge(
     seed: int = DEFAULT_SEED,
     backend: Literal["auto", "numpy", "cupy", "cuda_native"] = "auto",
     use_gsl_rng: bool = True,
-    rng_method: Literal["srand", "gsl", "numpy", None] = "srand",
+    rng_method: Literal["srand", "gsl", "mt19937", "numpy", None] = "srand",
     use_cache: bool = False,
     sparse_mode: bool = False,
     col_center: bool = True,
@@ -234,11 +238,14 @@ def ridge(
         Use GSL-compatible RNG for exact R SecAct reproducibility.
         Set to False for faster inference (~70x faster) when R matching is not needed.
         Ignored when ``rng_method`` is set.
-    rng_method : {"srand", "gsl", "numpy", None}, default=None
+    rng_method : {"srand", "gsl", "mt19937", "numpy", None}, default="srand"
         Explicit RNG backend selection. Overrides ``use_gsl_rng`` when set.
 
         - ``"srand"``: C stdlib srand/rand (matches R SecAct behavior)
-        - ``"gsl"``: GSL random number generator
+        - ``"gsl"`` / ``"mt19937"``: GSL MT19937 generator. ``"mt19937"`` is
+          the cross-language canonical name used by the flashreg /
+          flashregpy accelerators, accepted here so a configuration can be
+          shared verbatim across the packages.
         - ``"numpy"``: Fast NumPy RNG (~70x faster permutations)
         - ``None``: Falls back to ``use_gsl_rng`` for backward compatibility
     use_cache : bool, default=False
@@ -575,21 +582,31 @@ def _ridge_ttest_numpy(
     # Residual sum of squares per sample
     rss = np.sum(residuals ** 2, axis=0)  # (n_samples,)
 
-    # Degrees of freedom
-    df = n_genes - n_features
+    # Effective degrees of freedom for ridge: df = n - tr(H), where the
+    # ridge hat matrix H = X (X'X + λI)^{-1} X' and
+    # tr(H) = tr((X'X + λI)^{-1} X'X). OLS df = n - p over-counts the
+    # effective number of parameters at λ > 0 (the ridge shrinkage uses
+    # fewer effective dof). Matches flashregpy._ridge_ttest_numpy so the
+    # analytical path is bit-identical to the flashreg accelerator.
+    XtX_inv_XtX = XtX_inv @ XtX
+    trH = float(np.trace(XtX_inv_XtX))
+    df = n_genes - trH
     if df <= 0:
         warnings.warn(
-            f"Degrees of freedom <= 0 ({df}). "
+            f"Effective degrees of freedom <= 0 ({df:.3g}). "
             "Results may be unreliable. Consider using permutation test."
         )
-        df = max(df, 1)  # Prevent division by zero
+        df = max(df, 1.0)  # Prevent division by zero
 
     # Residual variance per sample
     sigma2 = rss / df  # (n_samples,)
 
-    # Standard errors
-    # SE_ij = sqrt(XtX_inv[i,i] * sigma2[j])
-    var_beta_diag = np.diag(XtX_inv)  # (n_features,)
+    # Standard errors from the ridge sandwich covariance:
+    #   Cov(β) = σ² (X'X + λI)^{-1} X'X (X'X + λI)^{-1}
+    # The plain OLS form σ² diag((X'X + λI)^{-1}) drops the central X'X
+    # and badly overstates SE at λ ≫ 0 (e.g. ~8× at λ = 5e5).
+    sandwich = XtX_inv_XtX @ XtX_inv  # (X'X+λI)^-1 X'X (X'X+λI)^-1
+    var_beta_diag = np.clip(np.diag(sandwich), 0.0, None)  # (n_features,)
     se = np.sqrt(np.outer(var_beta_diag, sigma2))  # (n_features, n_samples)
 
     # --- Step 4: T-statistics and p-values ---
@@ -1322,7 +1339,7 @@ def ridge_with_precomputed_T(
     n_rand: int = DEFAULT_NRAND,
     seed: int = DEFAULT_SEED,
     use_gsl_rng: bool = True,
-    rng_method: Literal["srand", "gsl", "numpy", None] = "srand",
+    rng_method: Literal["srand", "gsl", "mt19937", "numpy", None] = "srand",
 ) -> dict[str, np.ndarray]:
     """
     Ridge regression using precomputed projection matrix.
