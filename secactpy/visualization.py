@@ -24,6 +24,8 @@ __all__ = [
     "risk_lollipop",
     "secreted_protein_heatmap",
     "ccc_heatmap",
+    "secreted_protein_dotplot",
+    "secreted_protein_split_heatmap",
 ]
 
 _PRIMARY = "#3498db"
@@ -518,6 +520,283 @@ def ccc_heatmap(
         xaxis=dict(title="Receiver", side="bottom", tickangle=90, ticks="", constrain="domain"),
         yaxis=dict(title="Sender", ticks="", automargin=True),
         margin=dict(l=10, r=10, t=44 if title else 20, b=10),
+    )
+    return fig
+
+
+# diverging (signed activity) and sequential (non-negative spread) colorscales
+_DIVERGING = [[0.0, "#2166AC"], [0.5, "#F7F7F7"], [1.0, "#B2182B"]]
+_SEQ_SPREAD = [[0.0, "#F7F7F7"], [1.0, "#542788"]]
+
+
+def _hex_to_rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _sample_colorscale(t, colorscale):
+    """Interpolate a plotly colorscale (list of [pos, '#hex']) at t in [0,1] -> 'rgb(...)'."""
+    t = float(min(1.0, max(0.0, t)))
+    stops = [(float(p), _hex_to_rgb(c)) for p, c in colorscale]
+    for (p0, c0), (p1, c1) in zip(stops, stops[1:]):
+        if t <= p1:
+            f = 0.0 if p1 == p0 else (t - p0) / (p1 - p0)
+            rgb = [round(a + (b - a) * f) for a, b in zip(c0, c1)]
+            return f"rgb({rgb[0]},{rgb[1]},{rgb[2]})"
+    r = stops[-1][1]
+    return f"rgb({r[0]},{r[1]},{r[2]})"
+
+
+def _top_n_rows(mat, top_n):
+    """Union of top-`top_n` rows per column, ordered by the column each peaks in."""
+    keep, seen = [], set()
+    for col in mat.columns:
+        for r in mat[col].sort_values(ascending=False).head(top_n).index:
+            if r not in seen:
+                seen.add(r)
+                keep.append(r)
+    col_rank = {c: i for i, c in enumerate(mat.columns)}
+    peak = mat.loc[keep].idxmax(axis=1)
+    keep.sort(key=lambda r: (col_rank[peak[r]], -float(mat.loc[r, peak[r]])))
+    return keep
+
+
+def _resolve_activity_uncertainty(activity, *, sc, se=None, cell_types=None,
+                                  spread="sd", min_cells=30):
+    """Resolve (intensity, uncertainty, label) for the activity/uncertainty plots.
+
+    ``sc=False`` (cell-type level): ``activity`` is a proteins x cell-types
+    activity matrix; uncertainty is the ridge **SE** matrix (``se``, same shape).
+    ``sc=True`` (single-cell level): ``activity`` is per-cell (proteins x cells)
+    and ``cell_types`` labels each column; intensity = per-cell-type **mean**,
+    uncertainty = per-cell-type **spread** (``sd`` / ``cv`` / ``iqr``), with cell
+    types under ``min_cells`` dropped. Returns ``(None, None, None)`` when empty.
+    """
+    activity = pd.DataFrame(activity)
+    if not sc:
+        mat = activity.dropna(how="all").dropna(axis=1, how="all").astype(float)
+        if mat.empty:
+            return None, None, None
+        unc = (pd.DataFrame(se).reindex(index=mat.index, columns=mat.columns).astype(float)
+               if se is not None else None)
+        return mat, unc, "SE"
+    if cell_types is None:
+        raise ValueError("cell_types is required when sc=True (per-cell activity).")
+    ct = (cell_types.reindex(activity.columns) if isinstance(cell_types, pd.Series)
+          else pd.Series(list(cell_types), index=activity.columns))
+    counts = ct.value_counts()
+    keep = sorted([c for c in counts.index if counts[c] >= min_cells], key=str.lower)
+    if not keep:
+        return None, None, None
+    mean_df, unc_df = {}, {}
+    for c in keep:
+        block = activity[ct.index[ct == c]].astype(float)
+        m = block.mean(axis=1)
+        mean_df[c] = m
+        if spread == "iqr":
+            s = block.quantile(0.75, axis=1) - block.quantile(0.25, axis=1)
+        else:
+            s = block.std(axis=1, ddof=1)
+            if spread == "cv":
+                s = s / m.abs().replace(0, np.nan)
+        unc_df[c] = s
+    return (pd.DataFrame(mean_df).reindex(columns=keep),
+            pd.DataFrame(unc_df).reindex(columns=keep),
+            f"per-cell {spread.upper()}")
+
+
+def secreted_protein_dotplot(
+    activity: pd.DataFrame,
+    *,
+    sc: bool = False,
+    se: Optional[pd.DataFrame] = None,
+    cell_types: Any = None,
+    spread: str = "sd",
+    min_cells: int = 30,
+    invert_size: bool = False,
+    top_n: Optional[int] = None,
+    title: Optional[str] = None,
+    colorscale: Any = None,
+    max_marker: float = 26.0,
+    min_marker: float = 4.0,
+) -> go.Figure:
+    """Dot heatmap of secreted-protein activity: color = activity, size = uncertainty.
+
+    Scanpy-style dotplot. **Color** = signed activity (diverging scale). **Size**
+    = the uncertainty channel, chosen by ``sc``:
+
+    - ``sc=False`` (cell-type level): size = the ridge **SE** (pass ``se``, a
+      proteins x cell-types matrix aligned to ``activity``).
+    - ``sc=True`` (single-cell level): ``activity`` is per-cell (proteins x cells)
+      and ``cell_types`` labels each column; color = per-cell-type mean, size =
+      per-cell **spread** (``spread``), cell types under ``min_cells`` dropped.
+
+    By default a larger dot means *more* uncertainty; set ``invert_size=True`` to
+    map size to precision (1/uncertainty), so larger = more confident.
+    ``top_n`` keeps the union of the top-``top_n`` proteins per cell type.
+    """
+    colorscale = colorscale or _DIVERGING
+    mat, unc, unc_label = _resolve_activity_uncertainty(
+        activity, sc=sc, se=se, cell_types=cell_types, spread=spread, min_cells=min_cells)
+    if mat is None or mat.empty:
+        return _empty_figure("No activity values to plot")
+    if top_n:
+        rows = _top_n_rows(mat.fillna(-np.inf), top_n)
+        mat = mat.loc[rows]
+        if unc is not None:
+            unc = unc.loc[rows]
+
+    proteins = list(mat.index)
+    cell_types_ax = list(mat.columns)
+    ypos = {p: len(proteins) - 1 - i for i, p in enumerate(proteins)}
+    size_desc = None if unc is None else (f"precision (1/{unc_label})" if invert_size else unc_label)
+
+    def _to_size(v):
+        if unc is None or not np.isfinite(v):
+            return np.nan
+        return (1.0 / v) if (invert_size and v != 0) else float(v)
+
+    if unc is not None:
+        sv = np.array([_to_size(v) for v in unc.values.ravel()], dtype=float)
+        finite = sv[np.isfinite(sv)]
+        lo, hi = (float(finite.min()), float(finite.max())) if finite.size else (0.0, 1.0)
+
+    xs, ys, colors, sizes, hover = [], [], [], [], []
+    for p in proteins:
+        for c in cell_types_ax:
+            xs.append(c); ys.append(ypos[p]); colors.append(float(mat.loc[p, c]))
+            if unc is not None:
+                sval = _to_size(unc.loc[p, c])
+                px = ((min_marker + max_marker) / 2 if (not np.isfinite(sval) or hi == lo)
+                      else min_marker + (max_marker - min_marker) * (sval - lo) / (hi - lo))
+                sizes.append(px)
+                hover.append(f"{p} · {c}<br>activity: {mat.loc[p,c]:.2f}<br>{unc_label}: {float(unc.loc[p,c]):.3g}")
+            else:
+                sizes.append((min_marker + max_marker) / 2)
+                hover.append(f"{p} · {c}<br>activity: {mat.loc[p,c]:.2f}")
+
+    cmax = float(np.nanmax(np.abs(mat.values))) or 1.0
+    fig = go.Figure(go.Scatter(
+        x=xs, y=ys, mode="markers", showlegend=False,
+        marker=dict(color=colors, colorscale=colorscale, cmid=0, cmin=-cmax, cmax=cmax,
+                    size=sizes, line=dict(width=0.5, color="rgba(80,80,80,.5)"),
+                    colorbar=dict(title="activity")),
+        text=hover, hovertemplate="%{text}<extra></extra>",
+    ))
+    if unc is not None:
+        for frac, lab in [(0.15, "low"), (0.55, "mid"), (1.0, "high")]:
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None], mode="markers", name=f"{size_desc}: {lab}",
+                marker=dict(size=min_marker + (max_marker - min_marker) * frac,
+                            color="rgba(120,120,120,.6)")))
+    fig.update_layout(
+        title=dict(text=title or "", x=0.5, xanchor="center"),
+        template="plotly_white",
+        xaxis=dict(title=None, tickangle=90, side="bottom",
+                   categoryorder="array", categoryarray=cell_types_ax),
+        yaxis=dict(title=None, tickmode="array",
+                   tickvals=[ypos[p] for p in proteins], ticktext=proteins,
+                   range=[-0.7, len(proteins) - 0.3]),
+        margin=dict(l=10, r=10, t=44 if title else 20, b=10),
+        legend=dict(itemsizing="trace", y=1, x=1.02),
+    )
+    return fig
+
+
+def secreted_protein_split_heatmap(
+    activity: pd.DataFrame,
+    *,
+    sc: bool = False,
+    se: Optional[pd.DataFrame] = None,
+    cell_types: Any = None,
+    spread: str = "sd",
+    top_n: Optional[int] = None,
+    min_cells: int = 30,
+    title: Optional[str] = None,
+    intensity_colorscale: Any = None,
+    spread_colorscale: Any = None,
+) -> go.Figure:
+    """Split-cell heatmap: bottom-right = activity, top-left = uncertainty.
+
+    Each cell is split along the ``/`` diagonal: the **bottom-right** triangle
+    shows the secreted-protein activity (diverging scale, signed) and the
+    **top-left** triangle shows its uncertainty (sequential scale). The
+    uncertainty channel is chosen by ``sc``:
+
+    - ``sc=False`` (cell-type level): ``activity`` is a proteins x cell-types
+      matrix; the top-left triangle is the ridge **SE** (pass ``se``, same shape).
+    - ``sc=True`` (single-cell level): ``activity`` is per-cell (proteins x cells)
+      and ``cell_types`` labels each column; bottom-right = per-cell-type mean,
+      top-left = per-cell **spread** (``spread`` = ``sd``/``cv``/``iqr``), with
+      cell types under ``min_cells`` dropped.
+
+    Makes within-cell-type heterogeneity (or estimation uncertainty) visible
+    alongside the activity level. Best at modest size (top-N proteins x few cell
+    types); use ``top_n``.
+    """
+    intensity_colorscale = intensity_colorscale or _DIVERGING
+    spread_colorscale = spread_colorscale or _SEQ_SPREAD
+    mean_mat, unc_mat, unc_label = _resolve_activity_uncertainty(
+        activity, sc=sc, se=se, cell_types=cell_types, spread=spread, min_cells=min_cells)
+    if mean_mat is None or mean_mat.empty:
+        return _empty_figure(f"No cell type has >= {min_cells} cells" if sc
+                             else "No activity values to plot")
+    if unc_mat is None:
+        raise ValueError("se is required when sc=False (the top-left triangle "
+                         "needs an uncertainty matrix).")
+    if top_n:
+        rows = _top_n_rows(mean_mat.fillna(-np.inf), top_n)
+        mean_mat, unc_mat = mean_mat.loc[rows], unc_mat.loc[rows]
+
+    keep_ct = list(mean_mat.columns)
+    proteins = list(mean_mat.index)
+    n_p, n_c = len(proteins), len(keep_ct)
+    if n_p == 0:
+        return _empty_figure("No proteins to plot")
+
+    vmax = float(np.nanmax(np.abs(mean_mat.values))) or 1.0
+    smax = float(np.nanmax(unc_mat.values)) or 1.0
+
+    fig = go.Figure()
+    for ri, p in enumerate(proteins):
+        y = n_p - 1 - ri  # first protein on top
+        for ci, c in enumerate(keep_ct):
+            x = ci
+            mv, sv = mean_mat.loc[p, c], unc_mat.loc[p, c]
+            if np.isfinite(mv):  # bottom-right triangle = activity (diverging, centered 0)
+                t = 0.5 + 0.5 * (float(mv) / vmax)
+                fig.add_shape(type="path",
+                    path=f"M {x-0.5},{y-0.5} L {x+0.5},{y-0.5} L {x+0.5},{y+0.5} Z",
+                    fillcolor=_sample_colorscale(t, intensity_colorscale),
+                    line=dict(width=0.4, color="white"))
+            if np.isfinite(sv):  # top-left triangle = uncertainty (sequential)
+                fig.add_shape(type="path",
+                    path=f"M {x-0.5},{y-0.5} L {x-0.5},{y+0.5} L {x+0.5},{y+0.5} Z",
+                    fillcolor=_sample_colorscale(float(sv) / smax, spread_colorscale),
+                    line=dict(width=0.4, color="white"))
+
+    fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", showlegend=False,
+        marker=dict(colorscale=intensity_colorscale, cmin=-vmax, cmax=vmax, cmid=0,
+                    color=[0], showscale=True,
+                    colorbar=dict(title="activity", x=1.02, len=0.45, y=0.78))))
+    fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", showlegend=False,
+        marker=dict(colorscale=spread_colorscale, cmin=0, cmax=smax,
+                    color=[0], showscale=True,
+                    colorbar=dict(title=unc_label, x=1.02, len=0.45, y=0.25))))
+
+    fig.update_layout(
+        title=dict(text=title or "", x=0.5, xanchor="center"),
+        template="plotly_white",
+        xaxis=dict(tickmode="array", tickvals=list(range(n_c)), ticktext=keep_ct,
+                   tickangle=90, range=[-0.5, n_c - 0.5], constrain="domain",
+                   zeroline=False, showgrid=False),
+        yaxis=dict(tickmode="array", tickvals=list(range(n_p)),
+                   ticktext=list(reversed(proteins)), range=[-0.5, n_p - 0.5],
+                   zeroline=False, showgrid=False, scaleanchor="x", scaleratio=1),
+        margin=dict(l=10, r=10, t=46 if title else 22, b=10),
+        annotations=[dict(text=f"cells: top-left = {unc_label}, bottom-right = activity",
+                          xref="paper", yref="paper", x=0, y=1.04, showarrow=False,
+                          font=dict(size=10, color="#6C7883"))],
     )
     return fig
 

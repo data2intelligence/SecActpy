@@ -8,6 +8,8 @@ from secactpy.visualization import (
     activity_correlation,
     activity_distribution,
     ccc_heatmap,
+    secreted_protein_dotplot,
+    secreted_protein_split_heatmap,
     celltype_activity_boxplot,
     celltype_distribution,
     celltype_expression_boxplot,
@@ -158,6 +160,82 @@ def test_ccc_heatmap_counts():
     assert zdf.loc["B", "C"] == 1 and zdf.loc["C", "A"] == 1
     assert fig.layout.yaxis.title.text == "Sender"
     assert fig.layout.xaxis.title.text == "Receiver"
+
+
+def test_secreted_protein_dotplot_sc_false_se():
+    """sc=False: color = activity, size = SE (cell-type level)."""
+    rng = np.random.default_rng(0)
+    prot = [f"P{i}" for i in range(12)]
+    cts = ["A", "B", "C"]
+    z = pd.DataFrame(rng.standard_normal((12, 3)), index=prot, columns=cts)
+    se = pd.DataFrame(rng.uniform(0.1, 2, (12, 3)), index=prot, columns=cts)
+
+    fig = secreted_protein_dotplot(z, sc=False, se=se, title="dot")
+    tr = fig.data[0]
+    assert tr.type == "scatter" and tr.mode == "markers"
+    assert len(tr.x) == 12 * 3
+    assert tr.marker.cmid == 0 and tr.marker.colorbar.title.text == "activity"
+    assert len(set(np.round(tr.marker.size, 3))) > 1   # size varies with SE
+    assert max(tr.y) == 11                             # first protein on top
+
+    # no SE -> uniform dot size
+    assert len(set(np.round(secreted_protein_dotplot(z).data[0].marker.size, 3))) == 1
+    # empty
+    empty = secreted_protein_dotplot(pd.DataFrame())
+    assert not empty.data or empty.data[0].type != "scatter"
+
+
+def test_secreted_protein_dotplot_sc_true_percell_sd():
+    """sc=True: per-cell activity + cell_types -> color = mean, size = per-cell SD."""
+    rng = np.random.default_rng(2)
+    prot = [f"P{i}" for i in range(12)]
+    cells = [f"c{i}" for i in range(150)]
+    pca = pd.DataFrame(rng.standard_normal((12, 150)), index=prot, columns=cells)
+    ct = pd.Series(["A"] * 60 + ["B"] * 50 + ["C"] * 40, index=cells)
+
+    fig = secreted_protein_dotplot(pca, sc=True, cell_types=ct, spread="sd", min_cells=30)
+    tr = fig.data[0]
+    assert set(tr.x) == {"A", "B", "C"} and len(tr.x) == 12 * 3
+    assert len(set(np.round(tr.marker.size, 3))) > 1   # size varies with per-cell SD
+    # cell_types required when sc=True
+    with pytest.raises(ValueError):
+        secreted_protein_dotplot(pca, sc=True)
+
+
+def test_secreted_protein_split_heatmap_sc_true():
+    """sc=True: bottom-right = mean, top-left = per-cell spread."""
+    rng = np.random.default_rng(1)
+    prot = [f"P{i}" for i in range(15)]
+    cells = [f"c{i}" for i in range(220)]
+    pca = pd.DataFrame(rng.standard_normal((15, 220)), index=prot, columns=cells)
+    ct = pd.Series(["A"] * 90 + ["B"] * 70 + ["C"] * 50 + ["D"] * 10, index=cells)
+
+    fig = secreted_protein_split_heatmap(pca, sc=True, cell_types=ct, spread="sd",
+                                         min_cells=30, top_n=5, title="split")
+    assert set(fig.layout.xaxis.ticktext) == {"A", "B", "C"}   # D gated (< min_cells)
+    assert len(fig.layout.shapes) > 0 and len(fig.layout.shapes) % 2 == 0
+    assert len([t for t in fig.data if getattr(t.marker, "showscale", False)]) == 2
+    for s in ("sd", "cv", "iqr"):
+        assert secreted_protein_split_heatmap(pca, sc=True, cell_types=ct,
+                                              spread=s, min_cells=30).layout.shapes
+    # nothing passes the cell-count floor -> placeholder
+    assert secreted_protein_split_heatmap(pca, sc=True, cell_types=ct,
+                                          min_cells=300).layout.shapes == ()
+
+
+def test_secreted_protein_split_heatmap_sc_false_se():
+    """sc=False: bottom-right = activity, top-left = SE."""
+    rng = np.random.default_rng(3)
+    prot = [f"P{i}" for i in range(15)]
+    z = pd.DataFrame(rng.standard_normal((15, 3)), index=prot, columns=["A", "B", "C"])
+    se = pd.DataFrame(rng.uniform(0.1, 2, (15, 3)), index=prot, columns=["A", "B", "C"])
+
+    fig = secreted_protein_split_heatmap(z, sc=False, se=se, top_n=5)
+    assert len(fig.layout.shapes) > 0 and len(fig.layout.shapes) % 2 == 0
+    assert len([t for t in fig.data if getattr(t.marker, "showscale", False)]) == 2
+    # sc=False needs se for the top-left triangle
+    with pytest.raises(ValueError):
+        secreted_protein_split_heatmap(z, sc=False)
 
 
 def test_ccc_heatmap_accepts_result_dict_and_empty():

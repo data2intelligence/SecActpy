@@ -154,7 +154,9 @@ try:
         ccc_heatmap,
         gene_expression_stats,
         risk_lollipop,
+        secreted_protein_dotplot,
         secreted_protein_heatmap,
+        secreted_protein_split_heatmap,
         spatial_density,
     )
 except ImportError:
@@ -270,6 +272,8 @@ __all__ = [
     "secreted_protein_heatmap",
     "ccc_heatmap",
     "ccc_circle",
+    "secreted_protein_dotplot",
+    "secreted_protein_split_heatmap",
     # Downstream analysis
     "coxph_regression",
     "signaling_pattern",
