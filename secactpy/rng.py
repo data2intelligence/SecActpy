@@ -6,7 +6,7 @@ shuffle algorithm (matching R SecAct's C code) but differ in their source of
 random numbers:
 
 1. CStdlibRNG  -- C stdlib srand()/rand() via ctypes, matches R SecAct exactly
-                   on the same platform (default for use_gsl_rng=True)
+                   on the same platform (rng_method="srand", the default)
 2. GSLRNG      -- Pure Python GSL MT19937, matches GSL's gsl_rng_mt19937
 3. NumpyRNG    -- NumPy's MT19937 BitGenerator (fast, no R compatibility)
 

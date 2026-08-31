@@ -562,7 +562,6 @@ def main(input_file=None, reference=None, cosmx=False, save_output=False):
             seed=SEED,
             sig_filter=sig_filter,
             backend="numpy",
-            use_gsl_rng=True,  # Use GSL RNG for R compatibility
             use_cache=True,  # Cache permutation tables for faster repeated runs
             verbose=True
         )

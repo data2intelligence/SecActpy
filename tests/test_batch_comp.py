@@ -542,7 +542,6 @@ def test_visium(input_file: str = None, reference: str = None, use_gpu: bool = F
         seed=SEED,
         sig_filter=False,
         backend=backend,
-        use_gsl_rng=True,
         use_cache=True,
         verbose=True
     )

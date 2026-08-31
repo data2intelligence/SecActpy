@@ -560,7 +560,6 @@ def ridge_batch_streaming(
     chunk_size: int = 50_000,
     batch_size: int = 5000,
     backend: str = "auto",
-    use_gsl_rng: bool = True,
     rng_method: Optional[str] = "srand",
     use_cache: bool = False,
     output_path: Optional[str] = None,
@@ -599,10 +598,9 @@ def ridge_batch_streaming(
         Number of cells per ridge regression sub-batch.
     backend : str
         "auto", "numpy", or "cupy".
-    use_gsl_rng : bool
-        Use GSL-compatible RNG.
     rng_method : str or None
-        Explicit RNG backend.
+        The RNG that generates the permutation table ("srand", "gsl"/
+        "mt19937", "numpy", or None). Default "srand".
     use_cache : bool
         Cache permutation tables.
     output_path : str or None
@@ -672,7 +670,7 @@ def ridge_batch_streaming(
 
     if verbose:
         print("  Loading inverse permutation table...")
-    rng_obj, use_deterministic = _get_rng(rng_method, use_gsl_rng, seed)
+    rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
         if use_cache:
             inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
@@ -1002,7 +1000,6 @@ def run_streaming_scrnaseq(
     seed: int = DEFAULT_SEED,
     sig_filter: bool = False,
     backend: str = "auto",
-    use_gsl_rng: bool = True,
     rng_method: Optional[str] = "srand",
     use_cache: bool = False,
     batch_size: int = 5000,
@@ -1072,7 +1069,6 @@ def run_streaming_scrnaseq(
         chunk_size=chunk_size,
         batch_size=batch_size,
         backend=backend,
-        use_gsl_rng=use_gsl_rng,
         rng_method=rng_method,
         use_cache=use_cache,
         output_path=output_path,
@@ -1105,7 +1101,6 @@ def run_streaming_st(
     seed: int = DEFAULT_SEED,
     sig_filter: bool = False,
     backend: str = "auto",
-    use_gsl_rng: bool = True,
     rng_method: Optional[str] = "srand",
     use_cache: bool = False,
     batch_size: int = 5000,
@@ -1163,7 +1158,6 @@ def run_streaming_st(
         chunk_size=chunk_size,
         batch_size=batch_size,
         backend=backend,
-        use_gsl_rng=use_gsl_rng,
         rng_method=rng_method,
         use_cache=use_cache,
         output_path=output_path,
