@@ -23,6 +23,7 @@ __all__ = [
     "activity_change_bar",
     "risk_lollipop",
     "secreted_protein_heatmap",
+    "ccc_heatmap",
 ]
 
 _PRIMARY = "#3498db"
@@ -443,6 +444,79 @@ def secreted_protein_heatmap(
         template="plotly_white",
         xaxis=dict(side="bottom", tickangle=90, title=None, ticks="", constrain="domain"),
         yaxis=dict(title=None, ticks="", automargin=True),
+        margin=dict(l=10, r=10, t=44 if title else 20, b=10),
+    )
+    return fig
+
+
+def ccc_heatmap(
+    ccc: Any,
+    *,
+    row_sorted: bool = False,
+    column_sorted: bool = False,
+    title: str | None = None,
+    colorscale: Any = None,
+) -> go.Figure:
+    """Sender x receiver cell-cell communication count heatmap.
+
+    Python port of R SecAct's ``SecAct.CCC.heatmap``: a heatmap of the number
+    of secreted-protein interaction edges from each **sender** cell type (rows)
+    to each **receiver** cell type (columns), with the count printed in each
+    cell. Rows/columns cover the union of sender and receiver cell types so the
+    two axes align.
+
+    Parameters
+    ----------
+    ccc : DataFrame or dict
+        The CCC edge table (``secreted_protein_ccc`` from
+        :func:`secactpy.secact_ccc_scrnaseq`) with ``sender`` and ``receiver``
+        columns; the full result dict is also accepted.
+    row_sorted, column_sorted : bool
+        Sort senders / receivers by total interaction count (descending).
+    title : str, optional
+        Centered plot title.
+    colorscale : optional
+        Plotly colorscale; default white -> red (interaction counts are >= 0).
+
+    Returns
+    -------
+    plotly.graph_objects.Figure
+    """
+    if isinstance(ccc, dict):
+        ccc = ccc.get("secreted_protein_ccc")
+    cols = getattr(ccc, "columns", [])
+    if ccc is None or len(ccc) == 0 or not {"sender", "receiver"}.issubset(set(cols)):
+        return _empty_figure("No cell-cell communication edges to plot")
+
+    mat = pd.crosstab(ccc["sender"], ccc["receiver"])
+    cell_types = sorted(set(mat.index) | set(mat.columns))
+    mat = mat.reindex(index=cell_types, columns=cell_types, fill_value=0)
+
+    if row_sorted:
+        mat = mat.loc[mat.sum(axis=1).sort_values(ascending=False).index]
+    if column_sorted:
+        mat = mat[mat.sum(axis=0).sort_values(ascending=False).index]
+
+    if colorscale is None:
+        colorscale = [[0.0, "#f7f7f7"], [1.0, "#cf3a2e"]]
+
+    # reverse rows so the first sender is at the top (matches R's row order)
+    z = mat.values[::-1]
+    fig = go.Figure(go.Heatmap(
+        z=z,
+        x=[str(c) for c in mat.columns],
+        y=[str(r) for r in mat.index[::-1]],
+        colorscale=colorscale, zmin=0,
+        xgap=1, ygap=1,
+        text=z, texttemplate="%{text}", textfont=dict(size=12),
+        colorbar=dict(title="Edges"),
+        hovertemplate="sender: %{y}<br>receiver: %{x}<br>edges: %{z}<extra></extra>",
+    ))
+    fig.update_layout(
+        title=dict(text=title or "", x=0.5, xanchor="center"),
+        template="plotly_white",
+        xaxis=dict(title="Receiver", side="bottom", tickangle=90, ticks="", constrain="domain"),
+        yaxis=dict(title="Sender", ticks="", automargin=True),
         margin=dict(l=10, r=10, t=44 if title else 20, b=10),
     )
     return fig
