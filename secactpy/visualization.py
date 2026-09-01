@@ -454,6 +454,8 @@ def secreted_protein_heatmap(
 def ccc_heatmap(
     ccc: Any,
     *,
+    compare_to: Any = None,
+    labels: tuple = ("Case", "Control"),
     row_sorted: bool = False,
     column_sorted: bool = False,
     title: str | None = None,
@@ -484,23 +486,59 @@ def ccc_heatmap(
     -------
     plotly.graph_objects.Figure
     """
-    if isinstance(ccc, dict):
-        ccc = ccc.get("secreted_protein_ccc")
-    cols = getattr(ccc, "columns", [])
-    if ccc is None or len(ccc) == 0 or not {"sender", "receiver"}.issubset(set(cols)):
+    m1 = _ccc_matrix(ccc)
+    m2 = _ccc_matrix(compare_to) if compare_to is not None else None
+    if m1.empty and (m2 is None or m2.empty):
         return _empty_figure("No cell-cell communication edges to plot")
 
-    mat = pd.crosstab(ccc["sender"], ccc["receiver"])
-    cell_types = sorted(set(mat.index) | set(mat.columns))
-    mat = mat.reindex(index=cell_types, columns=cell_types, fill_value=0)
+    # One cell-type universe and ONE colour scale across panels. Scaling each
+    # panel to its own maximum would make two very different edge counts render
+    # as the same red, which is the opposite of what a contrast is for: here the
+    # non-responder arm carries several times the responder arm's edges, and that
+    # difference has to be visible rather than normalized away.
+    cell_types = sorted(set(m1.index) | set(m1.columns)
+                        | (set(m2.index) | set(m2.columns) if m2 is not None else set()))
+    m1 = m1.reindex(index=cell_types, columns=cell_types, fill_value=0)
+    if m2 is not None:
+        m2 = m2.reindex(index=cell_types, columns=cell_types, fill_value=0)
 
+    order_src = m1 if m2 is None else m1.add(m2, fill_value=0)
     if row_sorted:
-        mat = mat.loc[mat.sum(axis=1).sort_values(ascending=False).index]
+        idx = order_src.sum(axis=1).sort_values(ascending=False).index
+        m1 = m1.loc[idx]
+        m2 = None if m2 is None else m2.loc[idx]
     if column_sorted:
-        mat = mat[mat.sum(axis=0).sort_values(ascending=False).index]
+        cidx = order_src.sum(axis=0).sort_values(ascending=False).index
+        m1 = m1[cidx]
+        m2 = None if m2 is None else m2[cidx]
 
     if colorscale is None:
         colorscale = [[0.0, "#f7f7f7"], [1.0, "#cf3a2e"]]
+    zmax = float(max(m1.values.max(), 0 if m2 is None else m2.values.max())) or 1.0
+
+    if m2 is not None:
+        from plotly.subplots import make_subplots
+        fig = make_subplots(rows=1, cols=2, subplot_titles=list(labels[:2]),
+                            horizontal_spacing=0.13, shared_yaxes=True)
+        for k, m in enumerate((m1, m2)):
+            z = m.values[::-1]
+            fig.add_trace(go.Heatmap(
+                z=z, x=[str(c) for c in m.columns],
+                y=[str(r) for r in m.index[::-1]],
+                colorscale=colorscale, zmin=0, zmax=zmax, xgap=1, ygap=1,
+                text=z, texttemplate="%{text}", textfont=dict(size=13),
+                showscale=(k == 1), colorbar=dict(title="Edges"),
+                hovertemplate="sender: %{y}<br>receiver: %{x}<br>edges: %{z}<extra></extra>",
+            ), row=1, col=k + 1)
+            fig.update_xaxes(title="Receiver", tickangle=45, ticks="", row=1, col=k + 1)
+        fig.update_yaxes(title="Sender", ticks="", row=1, col=1)
+        fig.update_layout(
+            title=dict(text=title or "", x=0.5, xanchor="center"),
+            template="plotly_white",
+            margin=dict(l=10, r=10, t=70 if title else 40, b=10))
+        return fig
+
+    mat = m1
 
     # reverse rows so the first sender is at the top (matches R's row order)
     z = mat.values[::-1]
