@@ -134,6 +134,7 @@ def secact_ccc_scrnaseq(
     n_rand: int = 1000,
     backend: str = "auto",
     seed: int = 0,
+    n_jobs: int = 1,
     verbose: bool = False,
 ) -> dict[str, Any]:
     """Infer secreted-protein cell-cell communication from scRNA-seq.
@@ -206,13 +207,21 @@ exp_fraction_case_cutoff, padj_cutoff, min_cells
     # ---- Step 1: per-cell-type secreted-protein differential expression ----
     if verbose:
         print("Step 1: assessing changes in secreted protein expression.")
-    expression: dict[str, pd.DataFrame] = {}
-    for ct in cell_types:
+    # Subset the secreted-protein rows ONCE, before any densification. The
+    # original form was `_col_slice(counts, case)[sp_gene_idx]`, which builds a
+    # dense ALL-genes x cells block and then keeps ~1,170 of 31,831 rows -- ~27x
+    # more memory and work than the computation needs. Pre-slicing is exactly
+    # equivalent, not an approximation: `_normalize_log` is applied AFTER the row
+    # subset in both forms, so the per-cell sums it divides by are the
+    # secreted-protein sums either way.
+    counts_sp = counts[sp_gene_idx] if sparse.issparse(counts) else counts[sp_gene_idx]
+
+    def _one_cell_type(ct):
         case, control = _case_control_idx(ct)
         if case.size < min_cells:
-            continue
-        case_mat = _normalize_log(_col_slice(counts, case)[sp_gene_idx], scale_factor)
-        ctrl_mat = _normalize_log(_col_slice(counts, control)[sp_gene_idx], scale_factor)
+            return ct, None
+        case_mat = _normalize_log(_col_slice(counts_sp, case), scale_factor)
+        ctrl_mat = _normalize_log(_col_slice(counts_sp, control), scale_factor)
 
         mean_case = case_mat.mean(axis=1)
         mean_control = ctrl_mat.mean(axis=1)
@@ -232,7 +241,20 @@ exp_fraction_case_cutoff, padj_cutoff, min_cells
         }, index=sp_gene_names)
         df = df[df["exp_mean_all"] > 0]
         df["exp_pv.adj"] = _benjamini_hochberg(df["exp_pv"].values)
-        expression[ct] = df.sort_values("exp_pv.adj")
+        return ct, df.sort_values("exp_pv.adj")
+
+    # Cell types are independent, so this loop is embarrassingly parallel. THREADS
+    # rather than processes: the workers share one CSR matrix that would otherwise
+    # be pickled to each worker, and the hot calls (sparse->dense, the argsort
+    # inside mannwhitneyu, the numpy reductions) release the GIL.
+    if n_jobs == 1 or len(cell_types) < 2:
+        pairs = [_one_cell_type(ct) for ct in cell_types]
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        workers = len(cell_types) if n_jobs <= 0 else n_jobs
+        with ThreadPoolExecutor(max_workers=min(workers, len(cell_types))) as ex:
+            pairs = list(ex.map(_one_cell_type, cell_types))
+    expression: dict[str, pd.DataFrame] = {ct: df for ct, df in pairs if df is not None}
 
     if len(expression) < 2:
         raise ValueError("Fewer than two cell types have >= min_cells cells; cannot infer CCC.")
@@ -241,18 +263,41 @@ exp_fraction_case_cutoff, padj_cutoff, min_cells
     if verbose:
         print("Step 2: calculating changes in secreted protein activity (permutation ridge).")
     kept_cts = list(expression.keys())
-    bulk_diff = pd.DataFrame(index=gene_names, dtype=float)
+
+    # All 102 pseudobulk sums (51 cell types x case/control) in ONE pass.
+    #
+    # Each cell belongs to exactly one (cell type, condition) group, so the groups
+    # are DISJOINT and every nonzero of `counts` contributes to exactly one output
+    # column. A single sparse product against a cells x groups indicator therefore
+    # costs O(nnz) in total, where the obvious per-group forms cost O(nnz) EACH:
+    # densifying a (all-genes x cells) block per group built a 16 GB temporary to
+    # produce 29k numbers, and replacing that with a mat-vec per group is no better
+    # asymptotically -- it rescans all 320M nonzeros 102 times. Profiled at 200k
+    # cells this step was 56 s of a 97 s call before the change.
+    groups = []
     for ct in kept_cts:
         case, control = _case_control_idx(ct)
+        groups.append((ct, "case", case))
+        groups.append((ct, "control", control))
+    if sparse.issparse(counts):
+        rows = np.concatenate([g[2] for g in groups]) if groups else np.empty(0, int)
+        cols = np.concatenate([np.full(len(g[2]), j, dtype=int)
+                               for j, g in enumerate(groups)]) if groups else np.empty(0, int)
+        M = sparse.csc_matrix((np.ones(len(rows)), (rows, cols)),
+                              shape=(counts.shape[1], len(groups)))
+        sums = np.asarray((counts @ M).todense()) if sparse.issparse(counts @ M) \
+            else np.asarray(counts @ M)
+    else:
+        sums = np.column_stack([np.asarray(counts[:, g[2]]).sum(axis=1) for g in groups])
 
-        def _pseudobulk_log2tpm(idx):
-            block = _col_slice(counts, idx)
-            summed = block.sum(axis=1)
-            total = summed.sum()
-            tpm = summed / (total if total else 1.0) * 1e6
-            return np.log2(tpm + 1.0)
+    def _log2tpm(v):
+        total = v.sum()
+        return np.log2(v / (total if total else 1.0) * 1e6 + 1.0)
 
-        bulk_diff[ct] = _pseudobulk_log2tpm(case) - _pseudobulk_log2tpm(control)
+    bulk_diff = pd.DataFrame(index=gene_names, dtype=float)
+    for j in range(0, len(groups), 2):
+        ct = groups[j][0]
+        bulk_diff[ct] = _log2tpm(sums[:, j]) - _log2tpm(sums[:, j + 1])
 
     activity = secact_activity_inference(
         bulk_diff, is_differential=True, sig_matrix=sig_matrix,

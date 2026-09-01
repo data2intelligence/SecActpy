@@ -454,12 +454,25 @@ def secreted_protein_heatmap(
 def ccc_heatmap(
     ccc: Any,
     *,
+    compare_to: Any = None,
+    labels: tuple = ("Case", "Control"),
     row_sorted: bool = False,
     column_sorted: bool = False,
+    group_sizes: Any = None,
     title: str | None = None,
     colorscale: Any = None,
 ) -> go.Figure:
     """Sender x receiver cell-cell communication count heatmap.
+
+    ``group_sizes`` turns the counts into a RATE. When the axes are aggregates --
+    compartments standing for many subtypes -- a raw count rewards whichever
+    aggregate contains more subtypes, because it had more sender x receiver pairs
+    in which an edge could be found. Passing a mapping from axis label to the
+    number of constituent subtypes divides each cell by the number of possible
+    subtype pairs, giving edges per pair. That corrects for OPPORTUNITY; it does
+    not correct for detection power, which also rises with the cell count behind
+    each subtype, so a rate is a better comparison across compartments but still
+    not a per-cell interaction strength.
 
     Python port of R SecAct's ``SecAct.CCC.heatmap``: a heatmap of the number
     of secreted-protein interaction edges from each **sender** cell type (rows)
@@ -484,23 +497,73 @@ def ccc_heatmap(
     -------
     plotly.graph_objects.Figure
     """
-    if isinstance(ccc, dict):
-        ccc = ccc.get("secreted_protein_ccc")
-    cols = getattr(ccc, "columns", [])
-    if ccc is None or len(ccc) == 0 or not {"sender", "receiver"}.issubset(set(cols)):
+    m1 = _ccc_matrix(ccc)
+    m2 = _ccc_matrix(compare_to) if compare_to is not None else None
+    if m1.empty and (m2 is None or m2.empty):
         return _empty_figure("No cell-cell communication edges to plot")
 
-    mat = pd.crosstab(ccc["sender"], ccc["receiver"])
-    cell_types = sorted(set(mat.index) | set(mat.columns))
-    mat = mat.reindex(index=cell_types, columns=cell_types, fill_value=0)
+    # One cell-type universe and ONE colour scale across panels. Scaling each
+    # panel to its own maximum would make two very different edge counts render
+    # as the same red, which is the opposite of what a contrast is for: here the
+    # non-responder arm carries several times the responder arm's edges, and that
+    # difference has to be visible rather than normalized away.
+    cell_types = sorted(set(m1.index) | set(m1.columns)
+                        | (set(m2.index) | set(m2.columns) if m2 is not None else set()))
+    m1 = m1.reindex(index=cell_types, columns=cell_types, fill_value=0)
+    if m2 is not None:
+        m2 = m2.reindex(index=cell_types, columns=cell_types, fill_value=0)
 
+    order_src = m1 if m2 is None else m1.add(m2, fill_value=0)
     if row_sorted:
-        mat = mat.loc[mat.sum(axis=1).sort_values(ascending=False).index]
+        idx = order_src.sum(axis=1).sort_values(ascending=False).index
+        m1 = m1.loc[idx]
+        m2 = None if m2 is None else m2.loc[idx]
     if column_sorted:
-        mat = mat[mat.sum(axis=0).sort_values(ascending=False).index]
+        cidx = order_src.sum(axis=0).sort_values(ascending=False).index
+        m1 = m1[cidx]
+        m2 = None if m2 is None else m2[cidx]
+
+    if group_sizes is not None:
+        import numpy as _np
+        # Rows and columns are sorted INDEPENDENTLY above, so their orders differ
+        # in general; taking one vector for both axes silently pairs each sender
+        # with the wrong receiver's subtype count.
+        gr = _np.array([float(group_sizes[c]) for c in m1.index])
+        gc = _np.array([float(group_sizes[c]) for c in m1.columns])
+        denom = pd.DataFrame(_np.outer(gr, gc), index=m1.index, columns=m1.columns)
+        m1 = m1 / denom
+        if m2 is not None:
+            m2 = m2 / denom
 
     if colorscale is None:
         colorscale = [[0.0, "#f7f7f7"], [1.0, "#cf3a2e"]]
+    zmax = float(max(m1.values.max(), 0 if m2 is None else m2.values.max())) or 1.0
+    fmt = "%{text:.1f}" if group_sizes is not None else "%{text}"
+
+    if m2 is not None:
+        from plotly.subplots import make_subplots
+        fig = make_subplots(rows=1, cols=2, subplot_titles=list(labels[:2]),
+                            horizontal_spacing=0.13, shared_yaxes=True)
+        for k, m in enumerate((m1, m2)):
+            z = m.values[::-1]
+            fig.add_trace(go.Heatmap(
+                z=z, x=[str(c) for c in m.columns],
+                y=[str(r) for r in m.index[::-1]],
+                colorscale=colorscale, zmin=0, zmax=zmax, xgap=1, ygap=1,
+                text=z, texttemplate=fmt, textfont=dict(size=13),
+                showscale=(k == 1),
+                colorbar=dict(title="Edges/pair" if group_sizes is not None else "Edges"),
+                hovertemplate="sender: %{y}<br>receiver: %{x}<br>edges: %{z}<extra></extra>",
+            ), row=1, col=k + 1)
+            fig.update_xaxes(title="Receiver", tickangle=45, ticks="", row=1, col=k + 1)
+        fig.update_yaxes(title="Sender", ticks="", row=1, col=1)
+        fig.update_layout(
+            title=dict(text=title or "", x=0.5, xanchor="center"),
+            template="plotly_white",
+            margin=dict(l=10, r=10, t=70 if title else 40, b=10))
+        return fig
+
+    mat = m1
 
     # reverse rows so the first sender is at the top (matches R's row order)
     z = mat.values[::-1]
@@ -757,23 +820,33 @@ def secreted_protein_split_heatmap(
     vmax = float(np.nanmax(np.abs(mean_mat.values))) or 1.0
     smax = float(np.nanmax(unc_mat.values)) or 1.0
 
-    fig = go.Figure()
-    for ri, p in enumerate(proteins):
+    # Collect the triangles and assign them ONCE. `fig.add_shape` appends to an
+    # immutable tuple and revalidates every existing shape on each call, so a
+    # per-triangle loop is quadratic in the number of cells: measured at 210 / 520
+    # / 1,600 shapes it took 4.0s / 23.5s / 302s, which extrapolates to ~31 min for
+    # a 1,170 x 51 panel -- and that is exactly where a real run stalled. One
+    # assignment validates the list a single time.
+    shapes = []
+    mean_v = mean_mat.reindex(index=proteins, columns=keep_ct).values
+    unc_v = unc_mat.reindex(index=proteins, columns=keep_ct).values
+    for ri in range(len(proteins)):
         y = n_p - 1 - ri  # first protein on top
-        for ci, c in enumerate(keep_ct):
+        for ci in range(len(keep_ct)):
             x = ci
-            mv, sv = mean_mat.loc[p, c], unc_mat.loc[p, c]
+            mv, sv = mean_v[ri, ci], unc_v[ri, ci]
             if np.isfinite(mv):  # bottom-right triangle = activity (diverging, centered 0)
                 t = 0.5 + 0.5 * (float(mv) / vmax)
-                fig.add_shape(type="path",
+                shapes.append(dict(type="path",
                     path=f"M {x-0.5},{y-0.5} L {x+0.5},{y-0.5} L {x+0.5},{y+0.5} Z",
                     fillcolor=_sample_colorscale(t, intensity_colorscale),
-                    line=dict(width=0.4, color="white"))
+                    line=dict(width=0.4, color="white")))
             if np.isfinite(sv):  # top-left triangle = uncertainty (sequential)
-                fig.add_shape(type="path",
+                shapes.append(dict(type="path",
                     path=f"M {x-0.5},{y-0.5} L {x-0.5},{y+0.5} L {x+0.5},{y+0.5} Z",
                     fillcolor=_sample_colorscale(float(sv) / smax, spread_colorscale),
-                    line=dict(width=0.4, color="white"))
+                    line=dict(width=0.4, color="white")))
+    fig = go.Figure()
+    fig.update_layout(shapes=shapes)
 
     fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", showlegend=False,
         marker=dict(colorscale=intensity_colorscale, cmin=-vmax, cmax=vmax, cmid=0,
@@ -801,6 +874,93 @@ def secreted_protein_split_heatmap(
     return fig
 
 
+def representative_rows(mat, cor_threshold: float = 0.9, max_rows: int = 0,
+                        pick: str = "medoid"):
+    """Collapse rows with near-identical profiles to one representative each.
+
+    An activity heatmap selected as "top N per column" is usually far more
+    redundant than it looks: on the Zhang panel, 95% of the 75 selected proteins
+    had another selected protein correlating above 0.95 across cell types. Those
+    rows carry one pattern between them, and printing all of them spends vertical
+    space on repetition while hiding how many DISTINCT patterns there actually are.
+
+    Grouping is on the SIGNED correlation, not its absolute value. Two proteins
+    that mirror each other (r = -0.95) behave oppositely across cell types; they
+    are a contrast worth showing, not a duplicate to collapse.
+
+    ``pick`` decides which member speaks for the group. ``"medoid"`` (default)
+    takes the member whose profile is closest to the group's mean profile, i.e.
+    the one that actually TYPIFIES the shared pattern. ``"peak"`` takes the
+    largest peak |value|, which selects the group's most extreme member -- often
+    precisely the least typical one, and a poor label for the pattern it is
+    standing in for. The group size is returned either way, so the figure can say
+    what each row represents rather than silently dropping the rest.
+
+    Parameters
+    ----------
+    mat : DataFrame, rows = signatures, columns = samples/cell types.
+    cor_threshold : rows join a group when their profiles correlate at least this
+        much. 0.9 matches the convention `is_group_sig` uses for collapsing
+        signature columns upstream.
+    max_rows : keep only this many groups, largest peak |value| first. 0 = all.
+
+    Returns
+    -------
+    (reduced, groups) : `reduced` is `mat` restricted to representatives, ordered
+    as `mat` was; `groups` maps each representative to the full member list
+    (including itself).
+    """
+    import numpy as np
+    from scipy.cluster.hierarchy import fcluster, linkage
+    from scipy.spatial.distance import squareform
+
+    if mat is None or len(mat) < 2:
+        return mat, {i: [i] for i in getattr(mat, "index", [])}
+
+    V = np.asarray(mat, dtype=float)
+    keep = np.isfinite(V).all(1) & (V.std(1) > 0)
+    if keep.sum() < 2:
+        return mat, {i: [i] for i in mat.index}
+    sub = mat.loc[keep]
+    C = np.corrcoef(np.asarray(sub, dtype=float))
+    C = np.clip(np.nan_to_num(C, nan=0.0), -1.0, 1.0)
+    D = np.clip(1.0 - C, 0.0, 2.0)
+    np.fill_diagonal(D, 0.0)
+    lab = fcluster(linkage(squareform(D, checks=False), method="average"),
+                   t=1.0 - cor_threshold, criterion="distance")
+
+    V = np.asarray(sub, dtype=float)
+    peak = np.abs(V).max(axis=1)
+    groups, reps = {}, []
+    for cl in np.unique(lab):
+        sel = lab == cl
+        members = list(sub.index[sel])
+        if pick == "medoid" and sel.sum() > 1:
+            # closest to the group's mean profile, in correlation terms
+            centre = V[sel].mean(axis=0)
+            cs = np.array([np.corrcoef(v, centre)[0, 1] for v in V[sel]])
+            cs = np.nan_to_num(cs, nan=-1.0)
+            # tie-break on peak so the choice is deterministic and, among equally
+            # typical members, prefers the one carrying the strongest signal
+            best = int(np.lexsort((-peak[sel], -cs))[0])
+        else:
+            best = int(np.argmax(peak[sel]))
+        rep = sub.index[sel][best]
+        groups[rep] = members
+        reps.append(rep)
+    # rows that were dropped for being constant or non-finite stand alone
+    for i in mat.index[~keep]:
+        groups[i] = [i]
+        reps.append(i)
+
+    if max_rows and len(reps) > max_rows:
+        order = sorted(reps, key=lambda r: -float(np.abs(mat.loc[r]).max()))
+        reps = order[:max_rows]
+        groups = {r: groups[r] for r in reps}
+    reduced = mat.loc[[i for i in mat.index if i in set(reps)]]
+    return reduced, groups
+
+
 def _empty_figure(message: str) -> go.Figure:
     """Placeholder figure for missing data or errors."""
     fig = go.Figure()
@@ -812,4 +972,209 @@ def _empty_figure(message: str) -> go.Figure:
         xaxis=dict(visible=False), yaxis=dict(visible=False),
         template="plotly_white",
     )
+    return fig
+
+
+def _ccc_matrix(ccc: Any) -> pd.DataFrame:
+    """Sender x receiver edge-count matrix on the union of cell types."""
+    if isinstance(ccc, dict):
+        ccc = ccc.get("secreted_protein_ccc")
+    cols = getattr(ccc, "columns", [])
+    if ccc is None or len(ccc) == 0 or not {"sender", "receiver"}.issubset(set(cols)):
+        return pd.DataFrame()
+    mat = pd.crosstab(ccc["sender"], ccc["receiver"])
+    types = sorted(set(mat.index) | set(mat.columns))
+    return mat.reindex(index=types, columns=types, fill_value=0)
+
+
+def _arc(t0, t1, r, n=40):
+    a = np.linspace(t0, t1, n)
+    return r * np.cos(a), r * np.sin(a)
+
+
+def _ribbon(t0, t1, s0, s1, r, n=40):
+    """Filled chord between arc spans [t0,t1] and [s0,s1].
+
+    Both flanks are quadratic Beziers pulled toward the centre, which is what
+    makes a chord read as a connection rather than as a polygon: a straight
+    flank between two arcs on a circle looks like a wedge of the disc.
+    """
+    def bez(a, b, m=n):
+        p0 = np.array([r * np.cos(a), r * np.sin(a)])
+        p2 = np.array([r * np.cos(b), r * np.sin(b)])
+        u = np.linspace(0, 1, m)[:, None]
+        # control point at the origin: pull scales with angular separation, so
+        # near neighbours keep a shallow chord and opposite pairs bow deeply
+        p1 = np.zeros(2) * 0.0
+        pts = (1 - u) ** 2 * p0 + 2 * (1 - u) * u * p1 + u ** 2 * p2
+        return pts[:, 0], pts[:, 1]
+
+    ax, ay = _arc(t0, t1, r)
+    bx, by = bez(t1, s0)
+    cx, cy = _arc(s0, s1, r)
+    dx, dy = bez(s1, t0)
+    return np.concatenate([ax, bx, cx, dx]), np.concatenate([ay, by, cy, dy])
+
+
+_PALETTE = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B3", "#937860",
+            "#DA8BC3", "#8C8C8C", "#CCB974", "#64B5CD", "#E377C2", "#7F7F7F"]
+
+
+def _circle_panel(mat, geom, colors, sender, receiver, gap=0.02, r=1.0):
+    """Traces for one chord diagram; returns (traces, annotations).
+
+    ``geom`` sizes the arcs and ``mat`` supplies the chords. They are separate so
+    a multi-panel contrast can share one geometry: sizing each panel from its own
+    totals would rescale the arcs independently, and a cell type with fewer edges
+    would render as a different-sized node rather than as the same node sending
+    less.
+    """
+    types = list(geom.index)
+    total = (geom.sum(axis=1) + geom.sum(axis=0)).reindex(types).fillna(0).values
+    if total.sum() <= 0:
+        return [], []
+    span = (2 * np.pi - gap * len(types)) * total / total.sum()
+    start = np.cumsum(np.r_[0.0, span[:-1]] + gap) - gap
+    pos = {t: (start[i], start[i] + span[i]) for i, t in enumerate(types)}
+
+    traces = []
+    for i, t in enumerate(types):                      # node arcs
+        x, y = _arc(*pos[t], r=r)
+        xo, yo = _arc(pos[t][1], pos[t][0], r=r * 1.06)
+        traces.append(go.Scatter(
+            x=np.r_[x, xo], y=np.r_[y, yo], fill="toself", mode="lines",
+            line=dict(width=0), fillcolor=colors[t], hoverinfo="text",
+            text=f"{t}<br>out {int(mat.loc[t].sum())} / in {int(mat[t].sum())}",
+            showlegend=False))
+
+    # Each sender's outgoing edges consume its arc left to right, and each
+    # receiver's incoming edges consume its own arc, so a chord lands on a
+    # distinct slice at both ends rather than every chord stacking on the arc
+    # midpoint -- which is what makes the widths readable as counts.
+    out_cur = {t: pos[t][0] for t in types}
+    in_cur = {t: pos[t][0] for t in types}
+    out_tot = geom.sum(axis=1)
+    in_tot = geom.sum(axis=0)
+    for s in types:
+        for rc in types:
+            v = float(mat.loc[s, rc])
+            if v <= 0:
+                continue
+            ws = span[types.index(s)] * v / max(out_tot[s] + in_tot[s], 1e-9)
+            wr = span[types.index(rc)] * v / max(out_tot[rc] + in_tot[rc], 1e-9)
+            t0, t1 = out_cur[s], out_cur[s] + ws
+            s0, s1 = in_cur[rc], in_cur[rc] + wr
+            out_cur[s] = t1
+            in_cur[rc] = s1
+            visible = ((sender is None or s in sender)
+                       and (receiver is None or rc in receiver))
+            x, y = _ribbon(t0, t1, s0, s1, r * 0.98)
+            traces.append(go.Scatter(
+                x=x, y=y, fill="toself", mode="lines", line=dict(width=0),
+                fillcolor=colors[s] if visible else "rgba(0,0,0,0)",
+                opacity=0.55 if visible else 0.0, hoverinfo="text",
+                text=f"{s} -> {rc}: {int(v)} edges", showlegend=False))
+
+    ann = []
+    for t in types:
+        a = np.mean(pos[t])
+        ann.append(dict(x=r * 1.16 * np.cos(a), y=r * 1.16 * np.sin(a), text=t,
+                        showarrow=False, font=dict(size=11),
+                        xanchor="left" if np.cos(a) >= 0 else "right"))
+    return traces, ann
+
+
+def ccc_circle(
+    ccc: Any,
+    *,
+    compare_to: Any = None,
+    labels: tuple = ("Case", "Control"),
+    colors: Any = None,
+    sender: Any = None,
+    receiver: Any = None,
+    title: str | None = None,
+) -> go.Figure:
+    """Chord diagram of sender -> receiver secreted-protein communication.
+
+    Python port of R SecAct's ``SecAct.CCC.circle`` (``circlize::chordDiagram``).
+    Cell types sit on a circle with arc length proportional to their total
+    interaction count; each chord is one sender -> receiver pair with width
+    proportional to the number of significant secreted-protein edges, coloured by
+    the SENDER so direction is readable without arrowheads.
+
+    Parameters
+    ----------
+    ccc : DataFrame or dict
+        Edge table (``secreted_protein_ccc``) or the full result dict from
+        :func:`secactpy.secact_ccc_scrnaseq`.
+    compare_to : DataFrame or dict, optional
+        A second edge table drawn beside the first as a **contrast** — e.g.
+        responder vs non-responder. Both panels share one cell-type ordering,
+        one colour map, and one arc geometry derived from the COMBINED totals,
+        so the two circles are visually comparable; drawing each panel on its own
+        geometry would rescale the arcs independently and make a cell type that
+        merely has fewer edges look like a different cell type.
+    labels : tuple
+        Panel titles when ``compare_to`` is given.
+    colors : dict or list, optional
+        Cell-type colours. A dict maps names to colours; a list is cycled.
+    sender, receiver : str or iterable, optional
+        Restrict which chords are drawn, as R's ``sender``/``receiver`` do:
+        the arcs stay in place and non-matching chords become transparent, so
+        the filtered view keeps the same geometry as the unfiltered one.
+    title : str, optional
+
+    Returns
+    -------
+    plotly.graph_objects.Figure
+    """
+    from plotly.subplots import make_subplots
+
+    m1 = _ccc_matrix(ccc)
+    m2 = _ccc_matrix(compare_to) if compare_to is not None else None
+    if m1.empty and (m2 is None or m2.empty):
+        return _empty_figure("No cell-cell communication edges to plot")
+
+    # One shared cell-type universe and one shared geometry across panels.
+    types = sorted(set(m1.index) | (set(m2.index) if m2 is not None else set()))
+    m1 = m1.reindex(index=types, columns=types, fill_value=0) if not m1.empty \
+        else pd.DataFrame(0, index=types, columns=types)
+    if m2 is not None:
+        m2 = m2.reindex(index=types, columns=types, fill_value=0) if not m2.empty \
+            else pd.DataFrame(0, index=types, columns=types)
+
+    if isinstance(colors, dict):
+        cmap = {t: colors.get(t, _PALETTE[i % len(_PALETTE)]) for i, t in enumerate(types)}
+    else:
+        pal = list(colors) if colors is not None else _PALETTE
+        cmap = {t: pal[i % len(pal)] for i, t in enumerate(types)}
+
+    if isinstance(sender, str):
+        sender = [sender]
+    if isinstance(receiver, str):
+        receiver = [receiver]
+
+    mats = [m1] if m2 is None else [m1, m2]
+    # Shared arc geometry: sized by the COMBINED totals so a chord of the same
+    # width means the same count in either panel.
+    geom = sum(mats)
+    fig = make_subplots(rows=1, cols=len(mats),
+                        subplot_titles=list(labels[:len(mats)]) if m2 is not None else None,
+                        horizontal_spacing=0.06)
+    for k, m in enumerate(mats):
+        traces, ann = _circle_panel(m, geom, cmap, sender, receiver)
+        for tr in traces:
+            fig.add_trace(tr, row=1, col=k + 1)
+        for a in ann:
+            fig.add_annotation(a, row=1, col=k + 1)
+
+    for k in range(len(mats)):
+        fig.update_xaxes(visible=False, range=[-1.45, 1.45], row=1, col=k + 1)
+        fig.update_yaxes(visible=False, range=[-1.45, 1.45],
+                         scaleanchor=("x" if k == 0 else f"x{k + 1}"),
+                         row=1, col=k + 1)
+    fig.update_layout(
+        title=dict(text=title or "", x=0.5, xanchor="center"),
+        template="plotly_white", showlegend=False,
+        margin=dict(l=10, r=10, t=60 if title else 34, b=10))
     return fig
