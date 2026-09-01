@@ -133,3 +133,47 @@ def test_split_heatmap_is_linear_in_cells_not_quadratic():
     assert el < 20, (
         f"took {el:.1f}s for {len(fig.layout.shapes)} shapes -- the quadratic "
         f"add_shape path is back")
+
+
+def test_ccc_heatmap_rate_uses_sender_x_receiver_sizes():
+    """Normalizing must pair each sender with the RECEIVER's group size.
+
+    Rows and columns are sorted independently, so their orders differ in general.
+    Building the denominator from one vector for both axes pairs each sender with
+    the wrong receiver's count -- it produced 2,506/(17x17) where 2,506/(17x24)
+    was meant, and the error is invisible because every cell still looks like a
+    plausible rate.
+    """
+    import pandas as pd
+    from secactpy import ccc_heatmap
+
+    edges = pd.DataFrame({
+        "sender":   ["A"] * 30 + ["B"] * 12 + ["C"] * 6,
+        "receiver": ["B"] * 30 + ["C"] * 12 + ["A"] * 6,
+        "secretedProtein": [f"SP{i}" for i in range(48)],
+    })
+    sizes = {"A": 2, "B": 5, "C": 10}
+    fig = ccc_heatmap(edges, group_sizes=sizes, row_sorted=True, column_sorted=True)
+    z, rows, cols = fig.data[0].z, list(fig.data[0].y), list(fig.data[0].x)
+    raw = pd.crosstab(edges["sender"], edges["receiver"]).reindex(
+        index=rows, columns=cols, fill_value=0)
+    for i, r in enumerate(rows):
+        for j, c in enumerate(cols):
+            assert abs(z[i][j] - raw.loc[r, c] / (sizes[r] * sizes[c])) < 1e-9, (
+                f"{r}->{c}: {z[i][j]} != {raw.loc[r, c]}/({sizes[r]}*{sizes[c]})")
+
+
+def test_representative_rows_medoid_is_typical_not_extreme():
+    """The medoid must sit near the group's mean profile, unlike the peak pick."""
+    import pandas as pd
+    from secactpy import representative_rows
+
+    base = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    mat = pd.DataFrame(
+        [base, base * 1.02, base * 0.98, base * 8.0],       # last is an outlier in scale
+        index=["typ1", "typ2", "typ3", "loud"])
+    _, g_med = representative_rows(mat, cor_threshold=0.9, pick="medoid")
+    _, g_pk = representative_rows(mat, cor_threshold=0.9, pick="peak")
+    assert list(g_pk) == ["loud"], "peak pick should choose the extreme member"
+    assert list(g_med)[0] != "loud" or len(g_med) > 1, (
+        "medoid pick chose the group's most extreme member as its representative")

@@ -151,6 +151,7 @@ try:
         celltype_distribution,
         celltype_expression_boxplot,
         ccc_circle,
+        representative_rows,
         ccc_heatmap,
         gene_expression_stats,
         risk_lollipop,
@@ -272,6 +273,7 @@ __all__ = [
     "secreted_protein_heatmap",
     "ccc_heatmap",
     "ccc_circle",
+    "representative_rows",
     "secreted_protein_dotplot",
     "secreted_protein_split_heatmap",
     # Downstream analysis

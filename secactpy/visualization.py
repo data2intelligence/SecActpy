@@ -458,10 +458,21 @@ def ccc_heatmap(
     labels: tuple = ("Case", "Control"),
     row_sorted: bool = False,
     column_sorted: bool = False,
+    group_sizes: Any = None,
     title: str | None = None,
     colorscale: Any = None,
 ) -> go.Figure:
     """Sender x receiver cell-cell communication count heatmap.
+
+    ``group_sizes`` turns the counts into a RATE. When the axes are aggregates --
+    compartments standing for many subtypes -- a raw count rewards whichever
+    aggregate contains more subtypes, because it had more sender x receiver pairs
+    in which an edge could be found. Passing a mapping from axis label to the
+    number of constituent subtypes divides each cell by the number of possible
+    subtype pairs, giving edges per pair. That corrects for OPPORTUNITY; it does
+    not correct for detection power, which also rises with the cell count behind
+    each subtype, so a rate is a better comparison across compartments but still
+    not a per-cell interaction strength.
 
     Python port of R SecAct's ``SecAct.CCC.heatmap``: a heatmap of the number
     of secreted-protein interaction edges from each **sender** cell type (rows)
@@ -512,9 +523,22 @@ def ccc_heatmap(
         m1 = m1[cidx]
         m2 = None if m2 is None else m2[cidx]
 
+    if group_sizes is not None:
+        import numpy as _np
+        # Rows and columns are sorted INDEPENDENTLY above, so their orders differ
+        # in general; taking one vector for both axes silently pairs each sender
+        # with the wrong receiver's subtype count.
+        gr = _np.array([float(group_sizes[c]) for c in m1.index])
+        gc = _np.array([float(group_sizes[c]) for c in m1.columns])
+        denom = pd.DataFrame(_np.outer(gr, gc), index=m1.index, columns=m1.columns)
+        m1 = m1 / denom
+        if m2 is not None:
+            m2 = m2 / denom
+
     if colorscale is None:
         colorscale = [[0.0, "#f7f7f7"], [1.0, "#cf3a2e"]]
     zmax = float(max(m1.values.max(), 0 if m2 is None else m2.values.max())) or 1.0
+    fmt = "%{text:.1f}" if group_sizes is not None else "%{text}"
 
     if m2 is not None:
         from plotly.subplots import make_subplots
@@ -526,8 +550,9 @@ def ccc_heatmap(
                 z=z, x=[str(c) for c in m.columns],
                 y=[str(r) for r in m.index[::-1]],
                 colorscale=colorscale, zmin=0, zmax=zmax, xgap=1, ygap=1,
-                text=z, texttemplate="%{text}", textfont=dict(size=13),
-                showscale=(k == 1), colorbar=dict(title="Edges"),
+                text=z, texttemplate=fmt, textfont=dict(size=13),
+                showscale=(k == 1),
+                colorbar=dict(title="Edges/pair" if group_sizes is not None else "Edges"),
                 hovertemplate="sender: %{y}<br>receiver: %{x}<br>edges: %{z}<extra></extra>",
             ), row=1, col=k + 1)
             fig.update_xaxes(title="Receiver", tickangle=45, ticks="", row=1, col=k + 1)
@@ -847,6 +872,93 @@ def secreted_protein_split_heatmap(
                           font=dict(size=10, color="#6C7883"))],
     )
     return fig
+
+
+def representative_rows(mat, cor_threshold: float = 0.9, max_rows: int = 0,
+                        pick: str = "medoid"):
+    """Collapse rows with near-identical profiles to one representative each.
+
+    An activity heatmap selected as "top N per column" is usually far more
+    redundant than it looks: on the Zhang panel, 95% of the 75 selected proteins
+    had another selected protein correlating above 0.95 across cell types. Those
+    rows carry one pattern between them, and printing all of them spends vertical
+    space on repetition while hiding how many DISTINCT patterns there actually are.
+
+    Grouping is on the SIGNED correlation, not its absolute value. Two proteins
+    that mirror each other (r = -0.95) behave oppositely across cell types; they
+    are a contrast worth showing, not a duplicate to collapse.
+
+    ``pick`` decides which member speaks for the group. ``"medoid"`` (default)
+    takes the member whose profile is closest to the group's mean profile, i.e.
+    the one that actually TYPIFIES the shared pattern. ``"peak"`` takes the
+    largest peak |value|, which selects the group's most extreme member -- often
+    precisely the least typical one, and a poor label for the pattern it is
+    standing in for. The group size is returned either way, so the figure can say
+    what each row represents rather than silently dropping the rest.
+
+    Parameters
+    ----------
+    mat : DataFrame, rows = signatures, columns = samples/cell types.
+    cor_threshold : rows join a group when their profiles correlate at least this
+        much. 0.9 matches the convention `is_group_sig` uses for collapsing
+        signature columns upstream.
+    max_rows : keep only this many groups, largest peak |value| first. 0 = all.
+
+    Returns
+    -------
+    (reduced, groups) : `reduced` is `mat` restricted to representatives, ordered
+    as `mat` was; `groups` maps each representative to the full member list
+    (including itself).
+    """
+    import numpy as np
+    from scipy.cluster.hierarchy import fcluster, linkage
+    from scipy.spatial.distance import squareform
+
+    if mat is None or len(mat) < 2:
+        return mat, {i: [i] for i in getattr(mat, "index", [])}
+
+    V = np.asarray(mat, dtype=float)
+    keep = np.isfinite(V).all(1) & (V.std(1) > 0)
+    if keep.sum() < 2:
+        return mat, {i: [i] for i in mat.index}
+    sub = mat.loc[keep]
+    C = np.corrcoef(np.asarray(sub, dtype=float))
+    C = np.clip(np.nan_to_num(C, nan=0.0), -1.0, 1.0)
+    D = np.clip(1.0 - C, 0.0, 2.0)
+    np.fill_diagonal(D, 0.0)
+    lab = fcluster(linkage(squareform(D, checks=False), method="average"),
+                   t=1.0 - cor_threshold, criterion="distance")
+
+    V = np.asarray(sub, dtype=float)
+    peak = np.abs(V).max(axis=1)
+    groups, reps = {}, []
+    for cl in np.unique(lab):
+        sel = lab == cl
+        members = list(sub.index[sel])
+        if pick == "medoid" and sel.sum() > 1:
+            # closest to the group's mean profile, in correlation terms
+            centre = V[sel].mean(axis=0)
+            cs = np.array([np.corrcoef(v, centre)[0, 1] for v in V[sel]])
+            cs = np.nan_to_num(cs, nan=-1.0)
+            # tie-break on peak so the choice is deterministic and, among equally
+            # typical members, prefers the one carrying the strongest signal
+            best = int(np.lexsort((-peak[sel], -cs))[0])
+        else:
+            best = int(np.argmax(peak[sel]))
+        rep = sub.index[sel][best]
+        groups[rep] = members
+        reps.append(rep)
+    # rows that were dropped for being constant or non-finite stand alone
+    for i in mat.index[~keep]:
+        groups[i] = [i]
+        reps.append(i)
+
+    if max_rows and len(reps) > max_rows:
+        order = sorted(reps, key=lambda r: -float(np.abs(mat.loc[r]).max()))
+        reps = order[:max_rows]
+        groups = {r: groups[r] for r in reps}
+    reduced = mat.loc[[i for i in mat.index if i in set(reps)]]
+    return reduced, groups
 
 
 def _empty_figure(message: str) -> go.Figure:
