@@ -757,23 +757,33 @@ def secreted_protein_split_heatmap(
     vmax = float(np.nanmax(np.abs(mean_mat.values))) or 1.0
     smax = float(np.nanmax(unc_mat.values)) or 1.0
 
-    fig = go.Figure()
-    for ri, p in enumerate(proteins):
+    # Collect the triangles and assign them ONCE. `fig.add_shape` appends to an
+    # immutable tuple and revalidates every existing shape on each call, so a
+    # per-triangle loop is quadratic in the number of cells: measured at 210 / 520
+    # / 1,600 shapes it took 4.0s / 23.5s / 302s, which extrapolates to ~31 min for
+    # a 1,170 x 51 panel -- and that is exactly where a real run stalled. One
+    # assignment validates the list a single time.
+    shapes = []
+    mean_v = mean_mat.reindex(index=proteins, columns=keep_ct).values
+    unc_v = unc_mat.reindex(index=proteins, columns=keep_ct).values
+    for ri in range(len(proteins)):
         y = n_p - 1 - ri  # first protein on top
-        for ci, c in enumerate(keep_ct):
+        for ci in range(len(keep_ct)):
             x = ci
-            mv, sv = mean_mat.loc[p, c], unc_mat.loc[p, c]
+            mv, sv = mean_v[ri, ci], unc_v[ri, ci]
             if np.isfinite(mv):  # bottom-right triangle = activity (diverging, centered 0)
                 t = 0.5 + 0.5 * (float(mv) / vmax)
-                fig.add_shape(type="path",
+                shapes.append(dict(type="path",
                     path=f"M {x-0.5},{y-0.5} L {x+0.5},{y-0.5} L {x+0.5},{y+0.5} Z",
                     fillcolor=_sample_colorscale(t, intensity_colorscale),
-                    line=dict(width=0.4, color="white"))
+                    line=dict(width=0.4, color="white")))
             if np.isfinite(sv):  # top-left triangle = uncertainty (sequential)
-                fig.add_shape(type="path",
+                shapes.append(dict(type="path",
                     path=f"M {x-0.5},{y-0.5} L {x-0.5},{y+0.5} L {x+0.5},{y+0.5} Z",
                     fillcolor=_sample_colorscale(float(sv) / smax, spread_colorscale),
-                    line=dict(width=0.4, color="white"))
+                    line=dict(width=0.4, color="white")))
+    fig = go.Figure()
+    fig.update_layout(shapes=shapes)
 
     fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", showlegend=False,
         marker=dict(colorscale=intensity_colorscale, cmin=-vmax, cmax=vmax, cmid=0,

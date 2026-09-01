@@ -101,3 +101,35 @@ def test_colors_accept_dict_and_list():
     lst = ccc_circle(e, colors=["#111111", "#222222", "#333333"])
     fills = {getattr(tr, "fillcolor", None) for tr in lst.data}
     assert "#111111" in fills
+
+
+def test_split_heatmap_is_linear_in_cells_not_quadratic():
+    """`add_shape` per triangle is quadratic; the shapes must be assigned once.
+
+    plotly's `fig.add_shape` appends to an immutable tuple and revalidates every
+    existing shape on each call. A per-triangle loop therefore costs O(n^2) in the
+    number of cells: measured at 210 / 520 / 1,600 shapes it took 4.0s / 23.5s /
+    302s, which extrapolates to ~31 minutes for a 1,170 x 51 panel -- and a real
+    Zhang run stalled there for exactly that long before this was found.
+
+    The guard is a time bound rather than an implementation check, because the
+    property that matters to a caller is that the figure returns; an assertion on
+    the call shape would pass while the function was still unusable.
+    """
+    import time
+    import pandas as pd
+    from secactpy import secreted_protein_split_heatmap
+
+    rs = np.random.RandomState(0)
+    prot = [f"P{i}" for i in range(120)]
+    cts = [f"C{i}" for i in range(40)]
+    z = pd.DataFrame(rs.standard_normal((len(prot), len(cts))), index=prot, columns=cts)
+    se = pd.DataFrame(rs.random((len(prot), len(cts))) + 0.1, index=prot, columns=cts)
+
+    t = time.time()
+    fig = secreted_protein_split_heatmap(z, sc=False, se=se, top_n=10)
+    el = time.time() - t
+    assert len(fig.layout.shapes) > 500, "test panel is too small to catch the regression"
+    assert el < 20, (
+        f"took {el:.1f}s for {len(fig.layout.shapes)} shapes -- the quadratic "
+        f"add_shape path is back")
