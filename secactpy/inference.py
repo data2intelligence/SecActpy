@@ -1575,11 +1575,13 @@ def secact_activity_inference_scrnaseq(
     gc.collect()
 
     # --- Step 2: Standardize gene symbols ---
-    # Convert to uppercase (matching R's .transfer_symbol)
-    gene_names = [g.upper() for g in gene_names]
-
-    # Remove version numbers (e.g., "GENE.1" -> "GENE")
-    gene_names = [g.split('.')[0] if '.' in g else g for g in gene_names]
+    # SecAct R applies transferSymbol(): an NCBI alias->symbol lookup. It does NOT
+    # uppercase (0.7% of SecAct's own signature genes are not uppercase, e.g. C1orf159,
+    # so uppercasing silently loses them) and does NOT strip version suffixes. The
+    # previous code did both and no lookup, which left R and Python fitting different
+    # design matrices -- 19,658 genes vs 19,655 on the TdLN subset.
+    from .gene_symbols import transfer_symbol
+    gene_names = list(transfer_symbol(gene_names))
 
     # --- Step 3: Handle duplicates (keep highest mean) ---
     if len(gene_names) != len(set(gene_names)):
@@ -2260,11 +2262,13 @@ def secact_activity_inference_st(
         print(f"  After removing zero genes: {len(gene_names)} genes")
 
     # --- Step 3: Standardize gene symbols ---
-    # Convert to uppercase (matching R's .transfer_symbol)
-    gene_names = [g.upper() for g in gene_names]
-
-    # Remove version numbers (e.g., "GENE.1" -> "GENE")
-    gene_names = [g.split('.')[0] if '.' in g else g for g in gene_names]
+    # SecAct R applies transferSymbol(): an NCBI alias->symbol lookup. It does NOT
+    # uppercase (0.7% of SecAct's own signature genes are not uppercase, e.g. C1orf159,
+    # so uppercasing silently loses them) and does NOT strip version suffixes. The
+    # previous code did both and no lookup, which left R and Python fitting different
+    # design matrices -- 19,658 genes vs 19,655 on the TdLN subset.
+    from .gene_symbols import transfer_symbol
+    gene_names = list(transfer_symbol(gene_names))
 
     # --- Step 4: Handle duplicates (keep highest sum) ---
     if len(gene_names) != len(set(gene_names)):

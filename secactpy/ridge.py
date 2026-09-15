@@ -132,7 +132,22 @@ except Exception:
     _cuda_native_has_sparse = lambda: False
 
 
-_BACKENDS = ("auto", "numpy", "cupy", "cuda_native")
+# Optional sibling accelerator. SecAct R does the same thing: `backend="auto"`
+# dispatches to FlashReg::ridge when the package is installed and falls back to its own
+# pure-R loop otherwise. secactpy mirrors that -- flashregpy's C+OpenMP kernel when it is
+# importable, its own NumPy path when it is not. Results agree with the NumPy path to
+# ~1e-16 (tests/test_flashreg_backend.py); they are not bit-identical, because a threaded
+# reduction sums in a different order.
+try:
+    import flashregpy as _flashregpy
+    FLASHREG_AVAILABLE = True
+    FLASHREG_INIT_ERROR = None
+except Exception as _e:                                    # pragma: no cover
+    _flashregpy = None
+    FLASHREG_AVAILABLE = False
+    FLASHREG_INIT_ERROR = str(_e)
+
+_BACKENDS = ("auto", "numpy", "flashreg", "cupy", "cuda_native")
 
 
 def resolve_backend(backend: str) -> str:
@@ -148,7 +163,14 @@ def resolve_backend(backend: str) -> str:
             return "cuda_native"
         if CUPY_AVAILABLE:
             return "cupy"
+        if FLASHREG_AVAILABLE:
+            return "flashreg"
         return "numpy"
+    if backend == "flashreg" and not FLASHREG_AVAILABLE:
+        raise ImportError(
+            "flashreg backend requested but flashregpy is not importable"
+            + (f" ({FLASHREG_INIT_ERROR})" if FLASHREG_INIT_ERROR else "")
+            + ". Install it with: pip install 'secactpy[fast]'")
     if backend == "cupy" and not CUPY_AVAILABLE:
         error_msg = "CuPy backend requested but not available."
         if CUPY_INIT_ERROR:
@@ -163,6 +185,29 @@ def resolve_backend(backend: str) -> str:
             "then place at secactpy/_libs/libridgecuda_native.so or set "
             "SECACTPY_CUDA_NATIVE_LIB.")
     return backend
+
+
+def _ridge_flashreg(X, Y, lambda_, n_rand, seed, rng_method, verbose=False):
+    """Run the solve on flashregpy's C+OpenMP kernel, returning secactpy's dict.
+
+    rng_method is passed through unchanged: "mt19937" is flashregpy's "gsl" generator
+    under its cross-language name, so the permutation table is the same one SecAct R
+    builds. precision is forced to fp64 -- flashregpy's default of "fp32" is honoured
+    only by its jax backend, but pinning it here keeps the call correct if that ever
+    changes or if the backend is retargeted.
+    """
+    if _flashregpy is None:                                # pragma: no cover
+        raise ImportError("flashregpy is not importable")
+    import numpy as _np
+    out = _flashregpy.ridge(
+        _np.asarray(X, dtype=_np.float64), _np.asarray(Y, dtype=_np.float64),
+        lambda_=float(lambda_), n_rand=int(n_rand), seed=int(seed),
+        backend="omp", precision="fp64",
+        use_gsl_rng=(str(rng_method).lower() in ("gsl", "mt19937")))
+    if verbose:
+        print(f"  [secactpy] solve delegated to flashregpy (omp), "
+              f"beta {_np.shape(out['beta'])}")
+    return {k: out[k] for k in ("beta", "se", "zscore", "pvalue") if k in out}
 
 
 def _free_gpu_memory():
@@ -195,7 +240,7 @@ def ridge(
     lambda_: float = DEFAULT_LAMBDA,
     n_rand: int = DEFAULT_NRAND,
     seed: int = DEFAULT_SEED,
-    backend: Literal["auto", "numpy", "cupy", "cuda_native"] = "auto",
+    backend: Literal["auto", "numpy", "flashreg", "cupy", "cuda_native"] = "auto",
     rng_method: Literal["srand", "gsl", "mt19937", "numpy", None] = "srand",
     use_cache: bool = False,
     sparse_mode: bool = False,
@@ -376,6 +421,8 @@ def ridge(
             result = _ridge_sparse_cupy(X, Y, lambda_, n_rand, seed, rng_method, use_cache, verbose, col_center=col_center, col_scale=col_scale)
         else:
             result = _ridge_sparse_permutation_numpy(X, Y, lambda_, n_rand, seed, rng_method, use_cache, verbose, col_center=col_center, col_scale=col_scale)
+    elif backend == "flashreg":
+        result = _ridge_flashreg(X, Y, lambda_, n_rand, seed, rng_method, verbose)
     elif backend == "cuda_native":
         result = _ridge_cuda_native_dense(X, Y, lambda_, n_rand, seed, rng_method, use_cache, verbose)
     elif backend == "cupy":
