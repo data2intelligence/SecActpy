@@ -199,11 +199,15 @@ def _ridge_flashreg(X, Y, lambda_, n_rand, seed, rng_method, verbose=False):
     if _flashregpy is None:                                # pragma: no cover
         raise ImportError("flashregpy is not importable")
     import numpy as _np
+    # flashregpy names these n_perm and rng_method; passing secactpy's own n_rand and a
+    # derived use_gsl_rng raised TypeError on every call, so this branch had never run.
+    # rng_method goes through unchanged: flashregpy accepts "mt19937" and "gsl" as the
+    # same generator under its cross-language names, which is the table SecAct R builds.
     out = _flashregpy.ridge(
         _np.asarray(X, dtype=_np.float64), _np.asarray(Y, dtype=_np.float64),
-        lambda_=float(lambda_), n_rand=int(n_rand), seed=int(seed),
+        lambda_=float(lambda_), n_perm=int(n_rand), seed=int(seed),
         backend="omp", precision="fp64",
-        use_gsl_rng=(str(rng_method).lower() in ("gsl", "mt19937")))
+        rng_method=str(rng_method).lower())
     if verbose:
         print(f"  [secactpy] solve delegated to flashregpy (omp), "
               f"beta {_np.shape(out['beta'])}")
