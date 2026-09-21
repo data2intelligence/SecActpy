@@ -571,6 +571,27 @@ def ridge_batch_streaming(
 ) -> Optional[dict[str, Any]]:
     """Two-pass streaming ridge regression on H5AD file.
 
+    Reference profile and comparability
+    -----------------------------------
+    Activities are measured against a REFERENCE, and the reference is derived
+    from the input this call is given -- nothing wider. Results are therefore
+    comparable WITHIN one call and not across calls.
+
+    Batching does not affect it. `batch_size` / `chunk_size` partition the
+    computation after the reference is fixed, so any value gives the same answer
+    (verified: identical to float64 epsilon). What changes the reference is
+    changing the INPUT: two calls of 50 samples each centre on their own 50 and
+    disagree with one call of 100 -- measured at ~98% of the activity SD, with
+    sign flips, when the two halves differ in composition.
+
+    To compare across calls, fix the reference from outside: pass
+    `input_profile_control` (bulk) or supply an already-differential profile.
+    `secact_activity_inference_scrnaseq` exposes no such parameter, and
+    `secact_activity_inference_st` rejects `input_control` when `streaming=True`.
+    The reference is computed in pass 1 over EVERY cell in the file before any
+    coefficient exists, which is what makes this equal to the non-streaming path.
+    It is not optional and cannot be supplied: there is no reference parameter.
+
     Pass 1: Read chunks, normalize, accumulate row_sums and per-cell stats.
     Pass 2: Re-read chunks, compute cross terms, run inference in sub-batches.
 
@@ -751,7 +772,14 @@ def ridge_batch_streaming(
 
             abs_col_start = global_col_start + sub_start
             abs_col_end = global_col_start + sub_end
-            batch_stats = _PopulationStats(
+            # A VIEW onto the global statistics, restricted to this sub-batch's
+            # columns -- not statistics computed from the sub-batch. The per-cell
+            # arrays are sliced because entry j belongs to cell j; `row_means` is
+            # passed WHOLE because every cell shares the one reference computed
+            # over the entire file in pass 1. Nothing here is recomputed per batch,
+            # and nothing may be: a per-batch reference would make a cell's
+            # activity depend on which block it landed in.
+            global_stats_view = _PopulationStats(
                 mu=mu[abs_col_start:abs_col_end],
                 sigma=sigma_all[abs_col_start:abs_col_end],  # noqa: F821
                 mu_over_sigma=mu_over_sigma_all[abs_col_start:abs_col_end],  # noqa: F821
@@ -762,24 +790,24 @@ def ridge_batch_streaming(
             if use_gpu:
                 batch_result = _process_sparse_batch_cupy(
                     proj.T, proj.c, Y_sub,  # noqa: F821
-                    batch_stats.sigma, batch_stats.mu_over_sigma,
+                    global_stats_view.sigma, global_stats_view.mu_over_sigma,
                     inv_perm_table, n_rand,  # noqa: F821
                     sparse_mode=sparse_mode,
-                    row_means=batch_stats.row_means,
+                    row_means=global_stats_view.row_means,
                     col_center=True,
                     col_scale=True,
-                    mu=batch_stats.mu,
+                    mu=global_stats_view.mu,
                 )
             else:
                 batch_result = _process_sparse_batch_numpy(
                     proj.T, proj.c, Y_sub,  # noqa: F821
-                    batch_stats.sigma, batch_stats.mu_over_sigma,
+                    global_stats_view.sigma, global_stats_view.mu_over_sigma,
                     inv_perm_table, n_rand,  # noqa: F821
                     sparse_mode=sparse_mode,
-                    row_means=batch_stats.row_means,
+                    row_means=global_stats_view.row_means,
                     col_center=True,
                     col_scale=True,
-                    mu=batch_stats.mu,
+                    mu=global_stats_view.mu,
                 )
 
             if writer is not None:
@@ -788,7 +816,7 @@ def ridge_batch_streaming(
                 results_list.append(batch_result)
 
             n_batches_done += 1
-            del Y_sub, batch_stats, batch_result
+            del Y_sub, global_stats_view, batch_result
 
         new_start = global_col_start + buf_n
         del Y_buf

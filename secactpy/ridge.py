@@ -204,6 +204,28 @@ def ridge(
     verbose: bool = False
 ) -> dict[str, Any]:
     """
+
+    Reference profile and comparability
+    -----------------------------------
+    Activities are measured against a REFERENCE, and the reference is derived
+    from the input this call is given -- nothing wider. Results are therefore
+    comparable WITHIN one call and not across calls.
+
+    Batching does not affect it. `batch_size` / `chunk_size` partition the
+    computation after the reference is fixed, so any value gives the same answer
+    (verified: identical to float64 epsilon). What changes the reference is
+    changing the INPUT: two calls of 50 samples each centre on their own 50 and
+    disagree with one call of 100 -- measured at ~98% of the activity SD, with
+    sign flips, when the two halves differ in composition.
+
+    To compare across calls, fix the reference from outside: pass
+    `input_profile_control` (bulk) or supply an already-differential profile.
+    `secact_activity_inference_scrnaseq` exposes no such parameter, and
+    `secact_activity_inference_st` rejects `input_control` when `streaming=True`.
+    NOTE: this function has no `row_center`. It does not derive a reference of
+    its own -- whatever centring you applied to Y IS the reference. `ridge_batch`
+    and `ridge_batch_streaming` do row-centre, so passing the same raw Y to those
+    and to this one gives different answers, correctly.
     Ridge regression with permutation testing.
 
     Computes β = (X'X + λI)^{-1} X' Y with permutation-based significance testing.

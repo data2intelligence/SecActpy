@@ -1158,30 +1158,35 @@ def _ridge_batch_sparse_path(
         Y_batch = Y[:, start_col:end_col]
         
         # SLICE stats (not recompute!)
-        batch_stats = full_stats.slice(start_col, end_col)
+        # A VIEW onto `full_stats` (computed over the whole Y above), restricted
+        # to this batch's columns -- not statistics of the batch. `.slice()`
+        # slices the per-cell arrays and shares `row_means` unchanged, so the
+        # reference is identical for every batch. Same shape as the streaming
+        # path; see `global_stats_view` there.
+        global_stats_view = full_stats.slice(start_col, end_col)
         
         # Process batch
         if use_gpu:
             batch_result = _process_sparse_batch_cupy(
                 proj.T, proj.c, Y_batch,
-                batch_stats.sigma, batch_stats.mu_over_sigma,
+                global_stats_view.sigma, global_stats_view.mu_over_sigma,
                 inv_perm_table, n_rand,
                 sparse_mode=sparse_mode,
-                row_means=batch_stats.row_means,
+                row_means=global_stats_view.row_means,
                 col_center=col_center,
                 col_scale=col_scale,
-                mu=batch_stats.mu
+                mu=global_stats_view.mu
             )
         else:
             batch_result = _process_sparse_batch_numpy(
                 proj.T, proj.c, Y_batch,
-                batch_stats.sigma, batch_stats.mu_over_sigma,
+                global_stats_view.sigma, global_stats_view.mu_over_sigma,
                 inv_perm_table, n_rand,
                 sparse_mode=sparse_mode,
-                row_means=batch_stats.row_means,
+                row_means=global_stats_view.row_means,
                 col_center=col_center,
                 col_scale=col_scale,
-                mu=batch_stats.mu
+                mu=global_stats_view.mu
             )
         
         # Store or write
@@ -1199,7 +1204,7 @@ def _ridge_batch_sparse_path(
             print(f"    Batch {batch_idx + 1}/{n_batches}: {end_col - start_col} samples in {batch_time:.2f}s")
         
         # Cleanup
-        del Y_batch, batch_stats, batch_result
+        del Y_batch, global_stats_view, batch_result
         gc.collect()
     
     # Finalize
@@ -1419,6 +1424,27 @@ def ridge_batch(
     verbose: bool = False
 ) -> Optional[dict[str, Any]]:
     """
+
+    Reference profile and comparability
+    -----------------------------------
+    Activities are measured against a REFERENCE, and the reference is derived
+    from the input this call is given -- nothing wider. Results are therefore
+    comparable WITHIN one call and not across calls.
+
+    Batching does not affect it. `batch_size` / `chunk_size` partition the
+    computation after the reference is fixed, so any value gives the same answer
+    (verified: identical to float64 epsilon). What changes the reference is
+    changing the INPUT: two calls of 50 samples each centre on their own 50 and
+    disagree with one call of 100 -- measured at ~98% of the activity SD, with
+    sign flips, when the two halves differ in composition.
+
+    To compare across calls, fix the reference from outside: pass
+    `input_profile_control` (bulk) or supply an already-differential profile.
+    `secact_activity_inference_scrnaseq` exposes no such parameter, and
+    `secact_activity_inference_st` rejects `input_control` when `streaming=True`.
+    NOTE: `row_center` defaults to False, but every single-cell caller in this
+    package passes True (`secact_activity_inference_scrnaseq` / `_st`). With
+    row_center=True the reference is the row means of the Y you pass.
     Ridge regression with batch processing for large datasets.
 
     Computes T = (X'X + λI)^{-1} X' once, then processes Y in batches.
