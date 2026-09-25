@@ -83,10 +83,40 @@ def _ensure_cache_dir(cache_dir: str = None) -> str:
     return cache_dir
 
 
-def _get_cache_filename(n: int, n_perm: int, seed: int, inverse: bool) -> str:
-    """Generate cache filename."""
+# Generators a cached table can be built with. "gsl" and "mt19937" are one generator
+# (GSL's MT19937), so they share one cache file.
+_CACHE_RNG = {"srand": "srand", "gsl": "mt19937", "mt19937": "mt19937"}
+
+
+def _cache_rng(rng_method: str) -> str:
+    try:
+        return _CACHE_RNG[rng_method]
+    except KeyError:
+        raise ValueError(
+            f"No cached permutation table for rng_method={rng_method!r}; "
+            f"choose from {sorted(_CACHE_RNG)}") from None
+
+
+def _get_cache_filename(n: int, n_perm: int, seed: int, inverse: bool,
+                        rng_method: str = "srand") -> str:
+    """Generate cache filename.
+
+    The generator is part of the name: a table built with one generator must never be
+    served for another. "srand" keeps the original name, so existing caches stay valid.
+    """
     prefix = "inv_perm" if inverse else "perm"
-    return f"{prefix}_n{n}_nperm{n_perm}_seed{seed}.npy"
+    rng = _cache_rng(rng_method)
+    suffix = "" if rng == "srand" else f"_{rng}"
+    return f"{prefix}_n{n}_nperm{n_perm}_seed{seed}{suffix}.npy"
+
+
+def _generate_table(n: int, n_perm: int, seed: int, inverse: bool, rng_method: str) -> np.ndarray:
+    """Build a table with the generator `rng_method` names."""
+    if _cache_rng(rng_method) == "srand":
+        return (generate_inverse_permutation_table if inverse else generate_permutation_table)(
+            n, n_perm, seed)
+    rng = GSLRNG(seed)
+    return rng.inverse_permutation_table(n, n_perm) if inverse else rng.permutation_table(n, n_perm)
 
 
 # =============================================================================
@@ -623,7 +653,8 @@ def get_cached_perm_table(
     seed: int = 0,
     cache_dir: str = None,
     force_regenerate: bool = False,
-    verbose: bool = True
+    verbose: bool = True,
+    rng_method: str = "srand",
 ) -> np.ndarray:
     """
     Get permutation table, loading from cache if available.
@@ -642,6 +673,9 @@ def get_cached_perm_table(
         If True, regenerate even if cache exists.
     verbose : bool, default=True
         Print progress messages.
+    rng_method : {"srand", "gsl", "mt19937"}, default="srand"
+        Generator the table is built with; also part of the cache file name, so a table
+        built with one generator is never served for another.
 
     Returns
     -------
@@ -651,7 +685,7 @@ def get_cached_perm_table(
     import time
 
     cache_dir = _ensure_cache_dir(cache_dir)
-    cache_file = os.path.join(cache_dir, _get_cache_filename(n, n_perm, seed, inverse=False))
+    cache_file = os.path.join(cache_dir, _get_cache_filename(n, n_perm, seed, inverse=False, rng_method=rng_method))
 
     # Try to load from cache
     if not force_regenerate and os.path.exists(cache_file):
@@ -675,7 +709,7 @@ def get_cached_perm_table(
         print(f"  Generating permutation table (n={n}, n_perm={n_perm}, seed={seed})...")
 
     t_start = time.time()
-    table = generate_permutation_table(n, n_perm, seed)
+    table = _generate_table(n, n_perm, seed, inverse=False, rng_method=rng_method)
     t_gen = time.time() - t_start
 
     if verbose:
@@ -700,7 +734,8 @@ def get_cached_inverse_perm_table(
     seed: int = 0,
     cache_dir: str = None,
     force_regenerate: bool = False,
-    verbose: bool = True
+    verbose: bool = True,
+    rng_method: str = "srand",
 ) -> np.ndarray:
     """
     Get inverse permutation table, loading from cache if available.
@@ -722,6 +757,9 @@ def get_cached_inverse_perm_table(
         If True, regenerate even if cache exists.
     verbose : bool, default=True
         Print progress messages.
+    rng_method : {"srand", "gsl", "mt19937"}, default="srand"
+        Generator the table is built with; also part of the cache file name, so a table
+        built with one generator is never served for another.
 
     Returns
     -------
@@ -731,7 +769,7 @@ def get_cached_inverse_perm_table(
     import time
 
     cache_dir = _ensure_cache_dir(cache_dir)
-    cache_file = os.path.join(cache_dir, _get_cache_filename(n, n_perm, seed, inverse=True))
+    cache_file = os.path.join(cache_dir, _get_cache_filename(n, n_perm, seed, inverse=True, rng_method=rng_method))
 
     # Try to load from cache
     if not force_regenerate and os.path.exists(cache_file):
@@ -755,7 +793,7 @@ def get_cached_inverse_perm_table(
         print(f"  Generating inverse permutation table (n={n}, n_perm={n_perm}, seed={seed})...")
 
     t_start = time.time()
-    table = generate_inverse_permutation_table(n, n_perm, seed)
+    table = _generate_table(n, n_perm, seed, inverse=True, rng_method=rng_method)
     t_gen = time.time() - t_start
 
     if verbose:

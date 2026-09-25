@@ -479,7 +479,7 @@ def _ridge_permutation_numpy(
     rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
         if use_cache:
-            inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
+            inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose, rng_method=rng_method)
         else:
             inv_perm_table = rng_obj.inverse_permutation_table(n_genes, n_rand)
     else:
@@ -690,7 +690,7 @@ def _ridge_cuda_native_dense(
     elif use_deterministic:
         if use_cache:
             inv_perm_table = get_cached_inverse_perm_table(
-                X.shape[0], n_rand, seed, verbose=verbose)
+                X.shape[0], n_rand, seed, verbose=verbose, rng_method=rng_method)
         else:
             inv_perm_table = rng_obj.inverse_permutation_table(X.shape[0], n_rand)
     else:
@@ -761,7 +761,7 @@ def _ridge_sparse_cuda_native_dispatch(
     elif use_deterministic:
         if use_cache:
             inv_perm_table = get_cached_inverse_perm_table(
-                X.shape[0], n_rand, seed, verbose=verbose)
+                X.shape[0], n_rand, seed, verbose=verbose, rng_method=rng_method)
         else:
             inv_perm_table = rng_obj.inverse_permutation_table(X.shape[0], n_rand)
     else:
@@ -867,7 +867,7 @@ def _ridge_cupy(
     rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
         if use_cache:
-            inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
+            inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose, rng_method=rng_method)
         else:
             inv_perm_table = rng_obj.inverse_permutation_table(n_genes, n_rand)
     else:
@@ -1077,7 +1077,7 @@ def _ridge_sparse_permutation_numpy(
     rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
         if use_cache:
-            inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
+            inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose, rng_method=rng_method)
         else:
             inv_perm_table = rng_obj.inverse_permutation_table(n_genes, n_rand)
     else:
@@ -1235,7 +1235,7 @@ def _ridge_sparse_cupy(
     rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
         if use_cache:
-            inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
+            inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose, rng_method=rng_method)
         else:
             inv_perm_table = rng_obj.inverse_permutation_table(n_genes, n_rand)
     else:
@@ -1410,7 +1410,7 @@ def ridge_with_precomputed_T(
     # Permutation testing with T-column permutation
     rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
-        inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=False)
+        inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=False, rng_method=rng_method)
     else:
         inv_perm_table = generate_inverse_permutation_table_fast(n_genes, n_rand, seed)
 
