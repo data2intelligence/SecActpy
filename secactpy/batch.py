@@ -1119,7 +1119,7 @@ def _ridge_batch_sparse_path(
     rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
         if use_cache:
-            inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
+            inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose, rng_method=rng_method)
         else:
             inv_perm_table = rng_obj.inverse_permutation_table(n_genes, n_rand)
     else:
@@ -1320,7 +1320,7 @@ def _ridge_batch_disk_path(
     rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
         if use_cache:
-            inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
+            inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose, rng_method=rng_method)
         else:
             inv_perm_table = rng_obj.inverse_permutation_table(n_genes, n_rand)
     else:
@@ -1637,7 +1637,7 @@ def ridge_batch(
     rng_obj, use_deterministic = _get_rng(rng_method, seed)
     if use_deterministic:
         if use_cache:
-            inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose)
+            inv_perm_table = get_cached_inverse_perm_table(n_genes, n_rand, seed, verbose=verbose, rng_method=rng_method)
         else:
             inv_perm_table = rng_obj.inverse_permutation_table(n_genes, n_rand)
     else:
