@@ -64,6 +64,28 @@ from .rng import (
 )
 from .ridge import CUPY_AVAILABLE, EPS, DEFAULT_LAMBDA, DEFAULT_NRAND, DEFAULT_SEED, _free_gpu_memory, _get_rng, resolve_backend
 
+
+def _resolve_batch_backend(backend: str) -> str:
+    """Backend for the column-batched / streamed paths, which compute with numpy or cupy.
+
+    "auto" picks cupy when it is available, else numpy (flashregpy's backends are not
+    used here). An explicit "omp" or "cuda_native" is validated like ridge() does and
+    then runs on numpy ("omp") or on cupy if available, else numpy ("cuda_native"),
+    with a warning saying so; for flashregpy's own column-batched kernels see
+    flashregpy.batch.
+    """
+    if backend == "auto":
+        return "cupy" if CUPY_AVAILABLE else "numpy"
+    backend = resolve_backend(backend)
+    if backend in ("omp", "cuda_native"):
+        run = "cupy" if (backend == "cuda_native" and CUPY_AVAILABLE) else "numpy"
+        warnings.warn(
+            f"backend={backend!r}: the batched/streamed paths compute with numpy or "
+            f"cupy, so this call runs on {run!r}. Use ridge() (or flashregpy.batch) "
+            f"for flashregpy's {backend} kernel.", UserWarning, stacklevel=3)
+        return run
+    return backend
+
 # Try to import h5py for streaming output
 try:
     import h5py
@@ -1081,7 +1103,7 @@ def _ridge_batch_sparse_path(
     n_samples = Y.shape[1]
     n_batches = math.ceil(n_samples / batch_size)
 
-    backend = resolve_backend(backend)
+    backend = _resolve_batch_backend(backend)
     use_gpu = (backend == "cupy")
 
     if verbose:
@@ -1290,7 +1312,7 @@ def _ridge_batch_disk_path(
     n_samples = reader.shape[1]
     n_batches = math.ceil(n_samples / batch_size)
 
-    backend = resolve_backend(backend)
+    backend = _resolve_batch_backend(backend)
     use_gpu = (backend == "cupy")
 
     if verbose:
@@ -1592,7 +1614,7 @@ def ridge_batch(
         mem = estimate_memory(n_genes, n_features, n_samples, n_rand, batch_size)
         print(f"  Estimated memory: {mem['total']:.2f} GB total, {mem['per_batch']:.3f} GB per batch")
     
-    backend = resolve_backend(backend)
+    backend = _resolve_batch_backend(backend)
     use_gpu = (backend == "cupy")
     
     if verbose:

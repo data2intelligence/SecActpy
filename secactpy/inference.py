@@ -432,7 +432,7 @@ def secact_activity(
     n_rand: int = 1000,
     seed: int = 0,
     scale: Literal["zscore", "center", "none"] = "zscore",
-    backend: Literal["auto", "numpy", "cupy"] = "auto",
+    backend: Literal["auto", "numpy", "cupy", "omp", "cuda_native"] = "auto",
     min_genes: int = 10,
     rng_method: Literal["srand", "gsl", "numpy", None] = "srand",
     use_cache: bool = False,
@@ -468,8 +468,10 @@ def secact_activity(
         - "zscore": Standardize each sample to mean=0, std=1
         - "center": Center each sample to mean=0
         - "none": No scaling
-    backend : {"auto", "numpy", "cupy"}, default="auto"
-        Computation backend.
+    backend : {"auto", "numpy", "cupy", "omp", "cuda_native"}, default="auto"
+        Computation backend, as in :func:`secactpy.ridge.ridge`: SecActpy's own
+        "numpy" / "cupy", or "omp" / "cuda_native" from the optional flashregpy
+        package (``pip install 'secactpy[fast]'``).
     min_genes : int, default=10
         Minimum number of overlapping genes required.
     rng_method : {"srand", "gsl", "mt19937", "numpy", None}, default="srand"

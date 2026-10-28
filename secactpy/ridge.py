@@ -79,7 +79,7 @@ def _get_rng(rng_method, seed):
         )
     return cls(seed), True
 
-__all__ = ['ridge', 'CUPY_AVAILABLE', 'CUDA_NATIVE_AVAILABLE', 'resolve_backend']
+__all__ = ['ridge', 'CUPY_AVAILABLE', 'CUDA_NATIVE_AVAILABLE', 'FLASHREGPY_AVAILABLE', 'resolve_backend']
 
 
 # =============================================================================
@@ -102,52 +102,83 @@ except Exception as e:
     # Store the error but don't warn yet - only warn when GPU is actually requested
     CUPY_INIT_ERROR = str(e)
 
-# cuda_native: Python ctypes wrapper around RidgeCuda's compiled CUDA
-# kernel. ~14× faster than the high-level CuPy path on small-m fixtures
-# (one cudaLaunchKernel for the entire 1000-perm sweep vs ~5000 individual
-# launches via Python+CuPy). Bit-equivalent to the CuPy backend on β/SE/z/p
-# when both share the same inverse permutation table.
+# Optional accelerator: flashregpy. SecActpy's own backends are numpy and cupy.
+# The compiled backends -- "omp" (C+OpenMP, CPU) and "cuda_native" (CUDA, GPU) --
+# come from the flashregpy package and are available only when it is installed
+# (`pip install secactpy[fast]`). SecAct R does the same with FlashReg::ridge.
 try:
-    from secactpy._cuda_native import (
-        ridge_dense as _ridge_dense_cuda_native,
-        build_inv_perm_table_srand as _build_inv_perm_native,
-        CUDA_NATIVE_AVAILABLE,
-    )
-    # ridge_sparse + has_sparse_kernel — added when libridgecuda_native.so
-    # was rebuilt against RidgeCuda v0.2+ (commit 5eb3130). Older builds
-    # lack ridge_cuda_sparse; has_sparse_kernel() returns False there.
+    import flashregpy as _flashregpy
+    FLASHREGPY_AVAILABLE = True
+    FLASHREGPY_INIT_ERROR = None
+except Exception as _e:                                    # pragma: no cover
+    _flashregpy = None
+    FLASHREGPY_AVAILABLE = False
+    FLASHREGPY_INIT_ERROR = f"{type(_e).__name__}: {_e}"
+
+# Backends that run inside flashregpy (same names as flashregpy's own).
+_FLASHREGPY_BACKENDS = ("omp", "cuda_native")
+_BACKENDS = ("auto", "numpy", "cupy") + _FLASHREGPY_BACKENDS
+
+
+def _flashregpy_backend_error(backend: str) -> "str | None":
+    """Why `backend` cannot run through flashregpy, or None when it can."""
+    if not FLASHREGPY_AVAILABLE:
+        return (f"backend={backend!r} is provided by the optional flashregpy package, "
+                f"which is not importable"
+                + (f" ({FLASHREGPY_INIT_ERROR})" if FLASHREGPY_INIT_ERROR else "")
+                + ". Install it with: pip install 'secactpy[fast]'. SecActpy's own "
+                "backends are 'numpy' and 'cupy'.")
     try:
-        from secactpy._cuda_native import (
-            ridge_sparse as _ridge_sparse_cuda_native,
-            has_sparse_kernel as _cuda_native_has_sparse,
-        )
-    except Exception:
-        _ridge_sparse_cuda_native = None
-        _cuda_native_has_sparse = lambda: False
-except Exception:
-    CUDA_NATIVE_AVAILABLE = False
-    _ridge_dense_cuda_native = None
-    _build_inv_perm_native = None
-    _ridge_sparse_cuda_native = None
-    _cuda_native_has_sparse = lambda: False
+        _flashregpy.resolve_backend(backend)
+    except ImportError as e:
+        return f"backend={backend!r} (via flashregpy) is not usable: {e}"
+    # flashregpy's explicit check is that the kernel loads; its "auto" also requires a
+    # CUDA device, which is what running cuda_native needs.
+    if backend == "cuda_native" and _flashregpy_auto_choice() != "cuda_native":
+        return ("backend='cuda_native' (via flashregpy): the CUDA kernel loads but no "
+                "usable CUDA device was found.")
+    return None
 
 
-_BACKENDS = ("auto", "numpy", "cupy", "cuda_native")
+def _flashregpy_auto_choice() -> "str | None":
+    """The backend flashregpy's own "auto" picks ("cuda_native" or "omp"), or None."""
+    if not FLASHREGPY_AVAILABLE:
+        return None
+    with warnings.catch_warnings():          # its numpy-fallback warning is not ours
+        warnings.simplefilter("ignore")
+        try:
+            choice = _flashregpy.resolve_backend("auto")
+        except Exception:                                 # pragma: no cover
+            return None
+    return choice if choice in _FLASHREGPY_BACKENDS else None
+
+
+# True when backend="cuda_native" can run: flashregpy installed, its CUDA kernel
+# loads and a CUDA device is present.
+CUDA_NATIVE_AVAILABLE = _flashregpy_auto_choice() == "cuda_native"
 
 
 def resolve_backend(backend: str) -> str:
-    """Resolve backend string and validate availability.
+    """Resolve a backend string and validate its availability.
 
-    auto preference order: cuda_native > cupy > numpy.
+    SecActpy's own backends: "numpy" and "cupy". With the optional flashregpy
+    package installed, also "omp" (C+OpenMP CPU kernel) and "cuda_native" (CUDA
+    kernel); without it, requesting either raises ImportError naming the install.
+
+    "auto" order: cuda_native (flashregpy, kernel + GPU) > cupy > omp (flashregpy)
+    > numpy.
     """
     if backend not in _BACKENDS:
         raise ValueError(
             f"Unknown backend: {backend!r}. Choose from: {_BACKENDS!r}")
     if backend == "auto":
-        if CUDA_NATIVE_AVAILABLE:
+        fr = _flashregpy_auto_choice()
+        if fr == "cuda_native":
             return "cuda_native"
         if CUPY_AVAILABLE:
             return "cupy"
+        if fr == "omp":
+            return "omp"
         return "numpy"
     if backend == "cupy" and not CUPY_AVAILABLE:
         error_msg = "CuPy backend requested but not available."
@@ -156,13 +187,32 @@ def resolve_backend(backend: str) -> str:
         else:
             error_msg += " Install CuPy with: pip install cupy-cuda11x (or cupy-cuda12x)"
         raise ImportError(error_msg)
-    if backend == "cuda_native" and not CUDA_NATIVE_AVAILABLE:
-        raise ImportError(
-            "cuda_native backend requested but libridgecuda_native.so not "
-            "found. Build it: see ridge-bench/backends/cuda_native/Makefile, "
-            "then place at secactpy/_libs/libridgecuda_native.so or set "
-            "SECACTPY_CUDA_NATIVE_LIB.")
+    if backend in _FLASHREGPY_BACKENDS:
+        err = _flashregpy_backend_error(backend)
+        if err is not None:
+            raise ImportError(err)
     return backend
+
+
+def _ridge_flashregpy(X, Y, lambda_, n_rand, seed, rng_method, use_cache, verbose, *,
+                      backend, sparse_mode=False, col_center=True, col_scale=True):
+    """Permutation test on flashregpy's compiled kernel ("omp" or "cuda_native").
+
+    flashregpy builds the permutation table from ``rng_method`` and ``seed`` with the
+    same generators SecActpy uses ("srand" = C stdlib, "gsl"/"mt19937" = GSL MT19937),
+    so the null is the one the numpy backend draws. Sparse Y stays sparse and is
+    normalized per column in flight with the same convention (mean and ddof=1 sd over
+    all rows); dense Y is used as given, as in every SecActpy backend.
+    """
+    rng = "numpy" if rng_method is None else str(rng_method).lower()
+    if verbose:
+        print(f"  flashregpy: backend={backend}, {n_rand} permutations, rng_method={rng}")
+    out = _flashregpy.ridge(
+        X, Y, lambda_=float(lambda_), n_perm=int(n_rand), seed=int(seed),
+        backend=backend, precision="fp64", rng_method=rng, use_cache=use_cache,
+        sparse_mode=sparse_mode, col_center=col_center, col_scale=col_scale,
+        verbose=verbose)
+    return {k: np.asarray(out[k]) for k in ("beta", "se", "zscore", "pvalue")}
 
 
 def _free_gpu_memory():
@@ -195,7 +245,7 @@ def ridge(
     lambda_: float = DEFAULT_LAMBDA,
     n_rand: int = DEFAULT_NRAND,
     seed: int = DEFAULT_SEED,
-    backend: Literal["auto", "numpy", "cupy", "cuda_native"] = "auto",
+    backend: Literal["auto", "numpy", "cupy", "omp", "cuda_native"] = "auto",
     rng_method: Literal["srand", "gsl", "mt19937", "numpy", None] = "srand",
     use_cache: bool = False,
     sparse_mode: bool = False,
@@ -246,11 +296,14 @@ def ridge(
         If 0, performs analytical t-test instead.
     seed : int, default=0
         Random seed for permutations. Use 0 for R SecAct compatibility.
-    backend : {"auto", "numpy", "cupy"}, default="auto"
+    backend : {"auto", "numpy", "cupy", "omp", "cuda_native"}, default="auto"
         Computation backend.
-        - "auto": Use CuPy if available, else NumPy
-        - "numpy": Force CPU computation
-        - "cupy": Force GPU computation (raises error if unavailable)
+        - "numpy": SecActpy's CPU implementation (always available)
+        - "cupy": SecActpy's GPU implementation (needs CuPy and a GPU)
+        - "omp": flashregpy's C+OpenMP CPU kernel (needs the optional
+          flashregpy package: ``pip install 'secactpy[fast]'``)
+        - "cuda_native": flashregpy's CUDA kernel (needs flashregpy and a GPU)
+        - "auto": cuda_native > cupy > omp > numpy, the first available
     rng_method : {"srand", "gsl", "mt19937", "numpy", None}, default="srand"
         The RNG that generates the permutation table.
 
@@ -384,22 +437,16 @@ def ridge(
         # reference (mirrors flashregpy._ridge_ttest_fallthrough). Sparse Y
         # was densified above, so X @ beta residuals are well-defined here.
         result = _ridge_ttest_numpy(X, Y, lambda_, verbose)
+    elif backend in _FLASHREGPY_BACKENDS:
+        result = _ridge_flashregpy(
+            X, Y, lambda_, n_rand, seed, rng_method, use_cache, verbose,
+            backend=backend, sparse_mode=is_sparse_Y,
+            col_center=col_center, col_scale=col_scale)
     elif is_sparse_Y:
-        # cuda_native: when the loaded libridgecuda_native.so exposes
-        # ridge_cuda_sparse (RidgeCuda v0.2+ / commit 5eb3130 onward),
-        # route sparse Y through the compiled cusparseSpMM kernel —
-        # bit-equivalent to the dense path but skips the densify step
-        # and avoids the CuPy fallback. Older builds fall back to CuPy.
-        if backend == "cuda_native" and _cuda_native_has_sparse():
-            result = _ridge_sparse_cuda_native_dispatch(
-                X, Y, lambda_, n_rand, seed, rng_method,
-                use_cache, verbose, col_center=col_center, col_scale=col_scale)
-        elif backend in ("cupy", "cuda_native"):
+        if backend == "cupy":
             result = _ridge_sparse_cupy(X, Y, lambda_, n_rand, seed, rng_method, use_cache, verbose, col_center=col_center, col_scale=col_scale)
         else:
             result = _ridge_sparse_permutation_numpy(X, Y, lambda_, n_rand, seed, rng_method, use_cache, verbose, col_center=col_center, col_scale=col_scale)
-    elif backend == "cuda_native":
-        result = _ridge_cuda_native_dense(X, Y, lambda_, n_rand, seed, rng_method, use_cache, verbose)
     elif backend == "cupy":
         result = _ridge_cupy(X, Y, lambda_, n_rand, seed, rng_method, use_cache, verbose)
     else:
@@ -648,140 +695,6 @@ def _ridge_ttest_numpy(
 # CuPy Backend
 # =============================================================================
 
-def _ridge_cuda_native_dense(
-    X: np.ndarray,
-    Y: np.ndarray,
-    lambda_: float,
-    n_rand: int,
-    seed: int,
-    rng_method: str,
-    use_cache: bool,
-    verbose: bool,
-) -> dict[str, np.ndarray]:
-    """Dense ridge via the compiled CUDA kernel (libridgecuda_native.so).
-
-    Bit-equivalent to _ridge_cupy on β/SE/z/p when both share the same
-    inverse permutation table — which they do by construction (same
-    SecActpy CStdlibRNG / GSLRNG class produces the table). Provides
-    ~14× speedup at small m vs the high-level CuPy path by replacing
-    the Python+CuPy per-iter dispatch with a single cudaLaunchKernel.
-
-    Falls back via ImportError (caller catches) if the .so isn't
-    available; resolve_backend already gates that case.
-    """
-    if n_rand == 0:
-        # Internal guard: the public ridge() dispatch routes n_rand=0 to the
-        # numpy t-test for every backend, so this branch is not reached from
-        # there. It stays as a contract check for any direct internal caller.
-        raise NotImplementedError(
-            "_ridge_cuda_native_dense does not compute the analytical t-test "
-            "(n_rand=0); call ridge(), which runs it on numpy for any backend.")
-
-    # Generate inverse permutation table.
-    # Fast path: when rng_method='srand' and the bundled .so has the
-    # native helper, build the table in C (~200× faster than the Python
-    # CStdlibRNG loop, byte-equivalent at the same seed). Otherwise fall
-    # back to the same paths the CuPy backend uses so the perm tables
-    # remain identical.
-    rng_obj, use_deterministic = _get_rng(rng_method, seed)
-    if (rng_method == "srand" and not use_cache
-            and _build_inv_perm_native is not None):
-        inv_perm_table = _build_inv_perm_native(X.shape[0], n_rand, seed)
-    elif use_deterministic:
-        if use_cache:
-            inv_perm_table = get_cached_inverse_perm_table(
-                X.shape[0], n_rand, seed, verbose=verbose)
-        else:
-            inv_perm_table = rng_obj.inverse_permutation_table(X.shape[0], n_rand)
-    else:
-        inv_perm_table = generate_inverse_permutation_table_fast(
-            X.shape[0], n_rand, seed)
-
-    if verbose:
-        print(f"  cuda_native: dispatching to libridgecuda_native.so "
-              f"({n_rand} permutations, single cudaLaunchKernel)")
-
-    return _ridge_dense_cuda_native(
-        X, Y, lambda_, n_rand,
-        inv_perm_table=inv_perm_table)
-
-
-def _ridge_sparse_cuda_native_dispatch(
-    X: np.ndarray,
-    Y,                                # scipy.sparse matrix (CSR/CSC)
-    lambda_: float,
-    n_rand: int,
-    seed: int,
-    rng_method: str,
-    use_cache: bool,
-    verbose: bool,
-    *,
-    col_center: bool = False,
-    col_scale: bool = False,
-) -> dict[str, np.ndarray]:
-    """Sparse ridge via the compiled CUDA kernel's cusparseSpMM path.
-
-    Same RidgeCuda kernel the dense path uses, but takes Y as scipy.sparse
-    CSC and forwards the CSC slot arrays (data / indices / indptr) to
-    `ridge_cuda_sparse` — no host-side densify, the compute happens via
-    cusparseSpMM on GPU. Bit-equivalent to the cuda_native dense path
-    on β when fed dense(Y) vs sparse(Y) with the same inv_perm_table
-    (the cuSPARSE-vs-cuBLAS reduction order shifts by ε ~ 1e-15).
-
-    Available only when libridgecuda_native.so is built against
-    RidgeCuda v0.2+ (commit 5eb3130 onward); caller (`ridge`) gates on
-    `_cuda_native_has_sparse()`.
-    """
-    if n_rand == 0:
-        # Internal guard (see _ridge_cuda_native_dense): ridge() handles the
-        # n_rand=0 t-test on numpy; sparse Y is densified there first.
-        raise NotImplementedError(
-            "sparse cuda_native does not compute the analytical t-test "
-            "(n_rand=0); call ridge(), which runs it on numpy for any backend.")
-    # In-flight column normalization is now done INSIDE the CUDA kernel
-    # (RidgeCuda commit, applyColCorrection in ridge_cuda_sparse). We
-    # compute μ/σ once on the host using SecActpy's _sparse_col_stats
-    # convention (mean/std over ALL n rows, treating zeros as samples)
-    # and pass the device-uploaded arrays into the kernel. The same
-    # correction is applied to β_obs and every β_perm, so SE/z/p reflect
-    # the column-normalized statistic exactly — no CuPy fallback needed.
-    col_mu_arr = None
-    col_sigma_arr = None
-    if col_center or col_scale:
-        mu, sigma, _ = _sparse_col_stats(Y)
-        if col_center: col_mu_arr    = mu
-        if col_scale:  col_sigma_arr = sigma
-
-    # Build the inverse permutation table the same way the dense path does
-    # so dense ≡ sparse at the same seed.
-    rng_obj, use_deterministic = _get_rng(rng_method, seed)
-    if (rng_method == "srand" and not use_cache
-            and _build_inv_perm_native is not None):
-        inv_perm_table = _build_inv_perm_native(X.shape[0], n_rand, seed)
-    elif use_deterministic:
-        if use_cache:
-            inv_perm_table = get_cached_inverse_perm_table(
-                X.shape[0], n_rand, seed, verbose=verbose)
-        else:
-            inv_perm_table = rng_obj.inverse_permutation_table(X.shape[0], n_rand)
-    else:
-        inv_perm_table = generate_inverse_permutation_table_fast(
-            X.shape[0], n_rand, seed)
-
-    if verbose:
-        norm_tag = ""
-        if col_mu_arr is not None or col_sigma_arr is not None:
-            norm_tag = f" + in-flight col-norm (center={col_center}, scale={col_scale})"
-        print(f"  cuda_native sparse: dispatching to ridge_cuda_sparse "
-              f"({n_rand} perms via cusparseSpMM, no densify){norm_tag}")
-
-    Y_csc = Y.tocsc() if not sps.isspmatrix_csc(Y) else Y
-    return _ridge_sparse_cuda_native(
-        X, Y_csc, lambda_, n_rand,
-        inv_perm_table=inv_perm_table,
-        col_mu=col_mu_arr, col_sigma=col_sigma_arr)
-
-
 def _ridge_cupy(
     X: np.ndarray,
     Y: np.ndarray,
@@ -804,8 +717,8 @@ def _ridge_cupy(
         raise RuntimeError("CuPy not available")
 
     if n_rand == 0:
-        # Internal guard (see _ridge_cuda_native_dense): ridge() runs the
-        # n_rand=0 t-test on numpy for every backend.
+        # Internal guard: ridge() runs the n_rand=0 t-test on numpy for every
+        # backend.
         raise NotImplementedError(
             "_ridge_cupy does not compute the analytical t-test (n_rand=0); "
             "call ridge(), which runs it on numpy for any backend."

@@ -19,8 +19,8 @@ FlashReg note
 -------------
 The only compute-heavy numerical kernel is step 2's permutation ridge, which is
 delegated to :func:`secactpy.secact_activity_inference` and therefore runs on
-whatever accelerated backend that function is given (numpy / cupy / cuda_native
-/ flashregpy). This module adds **no new FlashReg kernel** — it is orchestration
+whatever backend that function is given (numpy / cupy, or omp / cuda_native through
+the optional flashregpy package). This module adds **no new FlashReg kernel** — it is orchestration
 over the existing accelerated activity inference. Step 1's Wilcoxon test is a
 rank-sum (not a ridge), vectorized here with SciPy; step 3 is lightweight
 DataFrame work.
@@ -157,8 +157,8 @@ exp_fraction_case_cutoff, padj_cutoff, min_cells
         Same cutoffs/defaults as the R function.
     sig_matrix, is_group_sig, is_group_cor, lambda_, n_rand, backend, seed
         Passed to :func:`secactpy.secact_activity_inference` for step 2 (the
-        accelerated permutation-ridge; ``backend`` selects numpy/cupy/
-        cuda_native).
+        accelerated permutation-ridge; ``backend`` selects numpy/cupy, or
+        omp/cuda_native with flashregpy installed).
 
     Returns
     -------

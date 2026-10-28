@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Compiled backends now come from the optional flashregpy package.** SecActpy's own
+  backends are `numpy` and `cupy`. `backend="omp"` (C + OpenMP CPU kernel) and
+  `backend="cuda_native"` (CUDA kernel) delegate to `flashregpy.ridge` and need
+  `pip install 'secactpy[fast]'`; without it they raise `ImportError` naming the install.
+  `auto` picks cuda_native (flashregpy kernel + GPU) > cupy > omp > numpy. Results equal the
+  numpy backend (beta/se/zscore to rounding, permutation p-values identical; dense and sparse,
+  `rng_method` srand and gsl). The batched/streamed paths keep computing with numpy/cupy; an
+  explicit omp/cuda_native there warns and says what runs.
+
+### Removed
+- The bundled `secactpy._cuda_native` loader for a self-built `libridgecuda_native.so`
+  (`SECACTPY_CUDA_NATIVE_LIB`); `backend="cuda_native"` is provided by flashregpy instead.
+
 ### Added
 - **On-disk read streaming for `ridge_batch`**: pass `Y` as a path / `h5py`
   handle / memmap and it is streamed in column blocks, so the full
